@@ -1,6 +1,8 @@
 
 #include <windows.h>
 
+#include "input.h"
+
 typedef double f64;
 
 struct
@@ -82,6 +84,9 @@ SwapBuffers(
 }
 
 void
+UpdateInput();
+
+void
 GetMessages()
 {
   MSG Message;
@@ -128,4 +133,21 @@ sys::WindowProc(
   }
 
   return DefWindowProc(Window, Message, WParam, LParam);
+}
+
+void
+sys::UpdateInput()
+{
+  g_Engine.Input.KeysHold = 0x0;
+
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_UP) & 0x8000      ? g_Engine.Input.KeysHold | key_action::KEY_FORWARD  : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_DOWN) & 0x8000    ? g_Engine.Input.KeysHold | key_action::KEY_BACKWARD : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LEFT) & 0x8000    ? g_Engine.Input.KeysHold | key_action::KEY_LEFT     : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_RIGHT) & 0x8000   ? g_Engine.Input.KeysHold | key_action::KEY_RIGHT    : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_SPACE) & 0x8000   ? g_Engine.Input.KeysHold | key_action::KEY_UP       : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_CONTROL) & 0x8000 ? g_Engine.Input.KeysHold | key_action::KEY_UP       : g_Engine.Input.KeysHold;
+
+  g_Engine.Input.KeysDown = (g_Engine.Input.KeysHold ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysUp = (g_Engine.Input.KeysHold ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysPrevHold;
+  g_Engine.Input.KeysPrevHold = g_Engine.Input.KeysHold;
 }

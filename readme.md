@@ -34,7 +34,7 @@
 
 1. Create Window (Win32)
 2. Game Loop
-3. Input System (Keyboard)
+3. Input System (Win32 Keyboard)
 4. Initialize:
     1. Vulkan init
     2. Commands

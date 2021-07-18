@@ -4,10 +4,9 @@ const static f64 FIXED_TIME = (1.0 / 60.0) * 1000000;
 struct
 engine
 {
-  // input state
   // renderer
-  // timer
   window Window = {};
+  input_state Input;
   double AwakeTime = 0.0;
   bool IsRunning = false;
 
@@ -27,6 +26,8 @@ engine
     while (IsRunning)
     {
       sys::GetMessages();
+
+      sys::UpdateInput();
 
       if (!IsRunning) break;
 

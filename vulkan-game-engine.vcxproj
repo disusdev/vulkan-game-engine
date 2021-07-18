@@ -53,6 +53,7 @@
   <ItemGroup>
     <ClInclude Include="src\config.h" />
     <ClInclude Include="src\engine.h" />
+    <ClInclude Include="src\input.h" />
     <ClInclude Include="src\win32_main.h" />
   </ItemGroup>
   <ItemGroup>
