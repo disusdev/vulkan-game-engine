@@ -1,0 +1,16 @@
+
+# vs
+.sln
+.vcxproj
+.vcxproj.user
+
+# folders
+.bin
+.out
+.lib
+.obj
+.dbg
+.vs
+.vscode
+.svn
+.libs
