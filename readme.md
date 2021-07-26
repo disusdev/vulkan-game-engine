@@ -1,6 +1,8 @@
 
 
-# **Vulkan Game Engine**
+# **Simple Game Engine in C++ [WIP]**
+
+> All work is in progress and plans can be changed over time.
 
 ## Spec:
 
@@ -59,3 +61,14 @@
     3. Loading Images
     4. Drawing Images
 10. GPU Driven Rendering
+
+## Actual names
+
+0. [Simple Game Engine in C++] How to setup project on Windows with premake C++
+1. [Simple Game Engine in C++] How to create window on Windows C++
+2. [Simple Game Engine in C++] How to create Game Loop C++
+3. [Simple Game Engine in C++] How to create Input System C++ : Part 1 [Windows]
+4. [Simple Game Engine in C++] How to create Input System C++ : Part 2 [Windows/Controller]
+5. [Simple Game Engine in C++] How to create Vulkan Renderer C++ : Part 1 [Initialize]
+6. [Simple Game Engine in C++] How to create Vulkan Renderer C++ : Part 2 [Draw triangle]
+7. [Simple Game Engine in C++] How to create File System C++

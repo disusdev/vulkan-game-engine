@@ -1,6 +1,10 @@
 
 #include "config.h"
 
+#if CONSOLE_APP
+#include "stdio.h"
+#endif
+
 #if PLATFORM_WIN
 
 #include "win32_main.h"

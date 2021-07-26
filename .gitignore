@@ -1,8 +1,8 @@
 
 # vs
-.sln
-.vcxproj
-.vcxproj.user
+*.sln
+*.vcxproj
+*.vcxproj.user
 
 # folders
 .bin

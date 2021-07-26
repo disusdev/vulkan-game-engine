@@ -1,8 +1,6 @@
 
 #include <windows.h>
 
-#include "input.h"
-
 typedef double f64;
 
 struct
@@ -11,6 +9,10 @@ window
   void* Instance = nullptr;
   void* WindowHendle = nullptr;
 };
+
+// ############################################################################
+// # sys
+// ############################################################################
 
 namespace sys
 {
@@ -24,81 +26,32 @@ WindowProc(
 );
 
 f64
-GetTime()
-{
-  LARGE_INTEGER time;
-  LARGE_INTEGER frequency;
-  QueryPerformanceFrequency(&frequency);
-  QueryPerformanceCounter(&time);
-  double nanoseconds_per_count = 1.0e9 / static_cast<double>(frequency.QuadPart);
-  return time.QuadPart * nanoseconds_per_count;
-}
+GetTime();
 
 bool
 WindowCreate(
   const wchar_t* WindowName,
   window* Window
-)
-{
-  WNDCLASS WindowClass = {};
-  WindowClass.style = CS_OWNDC|CS_HREDRAW|CS_VREDRAW;
-  WindowClass.lpfnWndProc = &WindowProc;
-  WindowClass.hInstance = (HINSTANCE) Window->Instance; // GetModuleHandle(NULL);
-  WindowClass.lpszClassName = L"EngineWindowClass";
-
-  RegisterClass(&WindowClass);
-
-  Window->WindowHendle = CreateWindowEx(
-    0,
-    WindowClass.lpszClassName,
-    WindowName,
-    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX, //WS_OVERLAPPEDWINDOW,//|WS_VISIBLE,
-    CW_USEDEFAULT,
-    CW_USEDEFAULT,
-    CW_USEDEFAULT,
-    CW_USEDEFAULT,
-    0,
-    0,
-    (HINSTANCE)Window->Instance, //GetModuleHandle(NULL),
-    0
-  );
-
-  if (Window->WindowHendle)
-  {
-    ShowWindow((HWND) Window->WindowHendle, SW_SHOW);
-    return true;
-  }
-
-  return false;
-}
+);
 
 void
 SwapBuffers(
   window& Window
-)
-{
-  HDC DeviceContext = GetDC((HWND)Window.WindowHendle);
-  // SWAP
-  SwapBuffers(DeviceContext);
-  ReleaseDC((HWND)Window.WindowHendle, DeviceContext);
-}
+);
+
+void
+GetMessages();
 
 void
 UpdateInput();
 
-void
-GetMessages()
-{
-  MSG Message;
-  while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
-  {
-    TranslateMessage(&Message);
-    DispatchMessage(&Message);
-  }
 }
 
-}
+// ############################################################################
+// # Win32 main
+// ############################################################################
 
+#include "input.h"
 #include "engine.h"
 
 engine g_Engine = {};
@@ -114,6 +67,10 @@ WinMain(
 
   return g_Engine.Run();
 }
+
+// ############################################################################
+// # sys functions
+// ############################################################################
 
 LRESULT CALLBACK
 sys::WindowProc(
@@ -133,6 +90,78 @@ sys::WindowProc(
   }
 
   return DefWindowProc(Window, Message, WParam, LParam);
+}
+
+f64
+sys::GetTime()
+{
+  LARGE_INTEGER time;
+  LARGE_INTEGER frequency;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&time);
+  double nanoseconds_per_count = 1.0e9 / static_cast<double>(frequency.QuadPart);
+  return time.QuadPart * nanoseconds_per_count;
+}
+
+bool
+sys::WindowCreate(
+  const wchar_t* WindowName,
+  window* Window
+)
+{
+  WNDCLASS WindowClass = {};
+  WindowClass.style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
+  WindowClass.lpfnWndProc = &WindowProc;
+  WindowClass.hInstance = (HINSTANCE)Window->Instance;
+  WindowClass.lpszClassName = L"EngineWindowClass";
+
+  RegisterClass(&WindowClass);
+
+  Window->WindowHendle = CreateWindowEx(
+    0,
+    WindowClass.lpszClassName,
+    WindowName,
+    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+    // | WS_OVERLAPPEDWINDOW, | WS_VISIBLE,
+    CW_USEDEFAULT,
+    CW_USEDEFAULT,
+    CW_USEDEFAULT,
+    CW_USEDEFAULT,
+    0,
+    0,
+    (HINSTANCE)Window->Instance, //GetModuleHandle(NULL),
+    0
+  );
+
+  if (Window->WindowHendle)
+  {
+    ShowWindow((HWND)Window->WindowHendle, SW_SHOW);
+    return true;
+  }
+
+  return false;
+}
+
+void
+sys::SwapBuffers(
+  window& Window
+)
+{
+  HDC DeviceContext = GetDC((HWND)Window.WindowHendle);
+  // SWAP
+  SwapBuffers(DeviceContext);
+  ReleaseDC((HWND)Window.WindowHendle, DeviceContext);
+}
+
+void
+sys::GetMessages()
+{
+  MSG Message;
+  while (PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
+  {
+    TranslateMessage(&Message);
+    DispatchMessage(&Message);
+  }
 }
 
 void

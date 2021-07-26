@@ -1,4 +1,6 @@
 
+#define DEBUG
+
 #define PLATFORM_WIN 1
 
 #if defined(DEBUG)

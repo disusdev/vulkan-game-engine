@@ -7,7 +7,7 @@ engine
   // renderer
   window Window = {};
   input_state Input;
-  double AwakeTime = 0.0;
+  f64 AwakeTime = 0.0;
   bool IsRunning = false;
 
   bool

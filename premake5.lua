@@ -1,14 +1,10 @@
 -- premake5.lua
 
-workspace "vulkan-game-engine"
+workspace "simple-game-engine"
     configurations { "Debug" }
     platforms { "Win64" }
 
-    filter { "platforms:Win64" }
-        system "windows"
-        architecture "x86_64"
-
-project "vulkan-game-engine"
+project "engine"
     kind "ConsoleApp"
     language "C++"
     targetdir ".bin/%{cfg.buildcfg}"
@@ -18,7 +14,6 @@ project "vulkan-game-engine"
     files { "./src/**.h", "./src/**.cpp" }
 
     filter "configurations:Debug"
-        defines { "DEBUG" }
         symbols "On"
 
     filter {"system:windows", "action:vs*"}
