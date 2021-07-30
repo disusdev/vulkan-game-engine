@@ -1,6 +1,6 @@
 
 enum
-key_action : int
+enKeyAction : int
 {
   KEY_NONE = 0,
   KEY_FORWARD = 1 << 0,
@@ -12,25 +12,25 @@ key_action : int
 };
 
 struct
-input_state
+stInputState
 {
   bool
   GetKey(
-    key_action action)
+    enKeyAction action)
   {
     return KeysHold & action;
   }
 
   bool
   GetKeyDown(
-    key_action action)
+    enKeyAction action)
   {
     return KeysDown & action;
   }
 
   bool
   GetKeyUp(
-    key_action action)
+    enKeyAction action)
   {
     return KeysUp & action;
   }

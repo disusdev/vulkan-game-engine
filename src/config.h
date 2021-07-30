@@ -8,3 +8,5 @@
 #else
 #define CONSOLE_APP 0
 #endif
+
+#define VK_USE_PLATFORM_WIN32_KHR

@@ -1,12 +1,15 @@
 
 const static f64 FIXED_TIME = (1.0 / 60.0) * 1000000;
 
+#include "vulkan_renderer.h"
+
 struct
 engine
 {
   // renderer
-  window Window = {};
-  input_state Input;
+  stWindow Window = {};
+  stInputState Input;
+  stRenderer Renderer;
   f64 AwakeTime = 0.0;
   bool IsRunning = false;
 
@@ -22,6 +25,8 @@ engine
     f64 accumulator = 0.0;
     f64 fresh = 0.0;
     f64 delta = 0.0;
+
+    Renderer.Init(Window);
 
     while (IsRunning)
     {
@@ -48,10 +53,12 @@ engine
         timer += FIXED_TIME;
       }
 
-      // render()
+      Renderer.Render();
 
       sys::SwapBuffers(Window);
     }
+
+    Renderer.Term();
 
     return 0;
   }

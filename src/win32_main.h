@@ -1,10 +1,17 @@
 
 #include <windows.h>
 
+#include <assert.h>
+
+#include <deque>
+#include <functional>
+#include <optional>
+#include <set>
+
 typedef double f64;
 
 struct
-window
+stWindow
 {
   void* Instance = nullptr;
   void* WindowHendle = nullptr;
@@ -31,12 +38,12 @@ GetTime();
 bool
 WindowCreate(
   const wchar_t* WindowName,
-  window* Window
+  stWindow* Window
 );
 
 void
 SwapBuffers(
-  window& Window
+  stWindow& Window
 );
 
 void
@@ -106,7 +113,7 @@ sys::GetTime()
 bool
 sys::WindowCreate(
   const wchar_t* WindowName,
-  window* Window
+  stWindow* Window
 )
 {
   WNDCLASS WindowClass = {};
@@ -125,8 +132,8 @@ sys::WindowCreate(
     // | WS_OVERLAPPEDWINDOW, | WS_VISIBLE,
     CW_USEDEFAULT,
     CW_USEDEFAULT,
-    CW_USEDEFAULT,
-    CW_USEDEFAULT,
+    1280,
+    720,
     0,
     0,
     (HINSTANCE)Window->Instance, //GetModuleHandle(NULL),
@@ -144,7 +151,7 @@ sys::WindowCreate(
 
 void
 sys::SwapBuffers(
-  window& Window
+  stWindow& Window
 )
 {
   HDC DeviceContext = GetDC((HWND)Window.WindowHendle);
@@ -169,14 +176,49 @@ sys::UpdateInput()
 {
   g_Engine.Input.KeysHold = 0x0;
 
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_UP) & 0x8000      ? g_Engine.Input.KeysHold | key_action::KEY_FORWARD  : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_DOWN) & 0x8000    ? g_Engine.Input.KeysHold | key_action::KEY_BACKWARD : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LEFT) & 0x8000    ? g_Engine.Input.KeysHold | key_action::KEY_LEFT     : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_RIGHT) & 0x8000   ? g_Engine.Input.KeysHold | key_action::KEY_RIGHT    : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_SPACE) & 0x8000   ? g_Engine.Input.KeysHold | key_action::KEY_UP       : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_CONTROL) & 0x8000 ? g_Engine.Input.KeysHold | key_action::KEY_UP       : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_UP) & 0x8000
+    ? g_Engine.Input.KeysHold | enKeyAction::KEY_FORWARD
+    : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_DOWN) & 0x8000
+    ? g_Engine.Input.KeysHold | enKeyAction::KEY_BACKWARD
+    : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LEFT) & 0x8000
+    ? g_Engine.Input.KeysHold | enKeyAction::KEY_LEFT
+    : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_RIGHT) & 0x8000
+    ? g_Engine.Input.KeysHold | enKeyAction::KEY_RIGHT
+    : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_SPACE) & 0x8000
+    ? g_Engine.Input.KeysHold | enKeyAction::KEY_UP
+    : g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_CONTROL) & 0x8000
+    ? g_Engine.Input.KeysHold | enKeyAction::KEY_UP
+    : g_Engine.Input.KeysHold;
 
-  g_Engine.Input.KeysDown = (g_Engine.Input.KeysHold ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysUp = (g_Engine.Input.KeysHold ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysPrevHold;
+  g_Engine.Input.KeysDown = (g_Engine.Input.KeysHold
+    ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysHold;
+  g_Engine.Input.KeysUp = (g_Engine.Input.KeysHold
+    ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysPrevHold;
   g_Engine.Input.KeysPrevHold = g_Engine.Input.KeysHold;
+}
+
+VkSurfaceKHR
+CreateSurface(
+  VkInstance instance,
+  const stWindow& window)
+{
+  VkSurfaceKHR surface = VK_NULL_HANDLE;
+  {
+    VkWin32SurfaceCreateInfoKHR SurfaceCreateInfo = {};
+    SurfaceCreateInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    SurfaceCreateInfo.pNext = nullptr;
+    SurfaceCreateInfo.flags = 0;
+    SurfaceCreateInfo.hinstance = (HINSTANCE) window.Instance;
+    SurfaceCreateInfo.hwnd = (HWND) window.WindowHendle;
+    VkResult Result = vkCreateWin32SurfaceKHR(
+      instance, &SurfaceCreateInfo, nullptr, &surface
+    );
+    assert(Result == VK_SUCCESS);
+  }
+  return surface;
 }
