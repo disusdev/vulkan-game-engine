@@ -24,3 +24,28 @@ project "engine"
     filter {"system:windows", "action:vs*"}
         systemversion("latest")
         buildoptions {"-bigobj"}
+
+project "resources"
+    kind "Utility"
+
+    targetdir ".bin/%{cfg.buildcfg}"
+    objdir ".obj/%{cfg.buildcfg}"
+
+    files { "./data/**" }
+
+    configuration "windows"
+        prebuildcommands { 'pushd .bin\nIF NOT EXIST data mklink /j "data" "../data"\npopd' }
+        prebuildmessage "Create folder link..."
+
+    filter 'files:**.frag'
+        buildmessage 'Compiling %{wks.location}%{file.relpath}'
+        buildcommands '"$(VULKAN_SDK)/Bin/glslangValidator.exe" -V "%{wks.location}%{file.relpath}" -o "%{file.directory}%{file.name}.spv"'
+        buildoutputs "%{file.directory}%{file.name}.spv"
+    
+    filter 'files:**.vert'
+        buildmessage 'Compiling %{wks.location}%{file.relpath}'
+        buildcommands '"$(VULKAN_SDK)/Bin/glslangValidator.exe" -V "%{wks.location}%{file.relpath}" -o "%{file.directory}%{file.name}.spv"'
+        buildoutputs "%{file.directory}%{file.name}.spv"
+
+    filter {"system:windows", "action:vs*"}
+        systemversion("latest")
