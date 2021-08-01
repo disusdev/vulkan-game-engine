@@ -63,4 +63,10 @@ engine
     return 0;
   }
 
+  void
+  Resize()
+  {
+    Renderer.RecreateSwapchain();
+  }
+
 };

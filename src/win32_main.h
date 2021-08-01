@@ -89,6 +89,10 @@ sys::WindowProc(
 {
   switch (Message)
   {
+  case WM_SIZE:
+  {
+    g_Engine.Resize();
+  } break;
   case WM_DESTROY:
   case WM_CLOSE:
   {
@@ -128,7 +132,7 @@ sys::WindowCreate(
     0,
     WindowClass.lpszClassName,
     WindowName,
-    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
     // | WS_OVERLAPPEDWINDOW, | WS_VISIBLE,
     CW_USEDEFAULT,
     CW_USEDEFAULT,
@@ -221,4 +225,40 @@ CreateSurface(
     assert(Result == VK_SUCCESS);
   }
   return surface;
+}
+
+template<class T> 
+const T& max(const T& a, const T& b)
+{
+    return (a < b) ? b : a;
+}
+
+template<class T> 
+const T& min(const T& a, const T& b)
+{
+    return (a < b) ? b : a;
+}
+
+template <typename T>
+T clip(const T& n, const T& lower, const T& upper) {
+  return max(lower, min(n, upper));
+}
+
+VkExtent2D
+ChooseSwapExtent(
+  const VkSurfaceCapabilitiesKHR& capabilities)
+{
+  if (capabilities.currentExtent.width != UINT32_MAX)
+  {
+    return capabilities.currentExtent;
+  }
+  else
+  {
+    VkExtent2D actualExtent = { 1264, 681 };
+
+    actualExtent.width = clip(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+    actualExtent.height = clip(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+    return actualExtent;
+  }
 }

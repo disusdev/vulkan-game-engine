@@ -9,22 +9,18 @@
   assert(result == VK_SUCCESS);\
 }
 
-struct
-stQueueFamilyIndices
+enum
+enQueueType : int
 {
-	std::optional<uint32_t> GraphicsFamily;
-  std::optional<uint32_t> ComputeFamily;
-	std::optional<uint32_t> PresentFamily;
-
-	bool IsComplete()
-	{
-		return GraphicsFamily.has_value() && PresentFamily.has_value();
-	}
+  QUEUE_TYPE_GRAPHICS = 0,
+  QUEUE_TYPE_PRESENT = 0,
+  QUEUE_TYPE_COMPUTE = 1
 };
 
 struct
 stQueue
 {
+  enQueueType Type = QUEUE_TYPE_GRAPHICS;
   VkQueue Queue = VK_NULL_HANDLE;
   uint32_t Index = 0;
 };
@@ -34,10 +30,19 @@ stDevice
 {
   VkPhysicalDevice PhysicalDevice = VK_NULL_HANDLE;
   VkDevice LogicalDevice = VK_NULL_HANDLE;
-  stQueue GraphicsQueue = {};
-  stQueue ComputeQueue = {};
-  stQueue PresentQueue = {};
+  stQueue Queues[2] = {};
 };
+
+VkSurfaceKHR
+CreateSurface(
+  VkInstance instance,
+  const stWindow& window
+);
+
+VkExtent2D
+ChooseSwapExtent(
+  const VkSurfaceCapabilitiesKHR& capabilities
+);
 
 #include "vulkan_initializers.h"
 
@@ -61,13 +66,6 @@ stDeletionQueue
     Deletors.clear();
   }
 };
-
-
-VkSurfaceKHR
-CreateSurface(
-  VkInstance instance,
-  const stWindow& window
-);
 
 #define MAX_PHYSICAL_DEVICE_COUNT 16
 #define MAX_SWAPCHAIN_IMAGE_COUNT 16
@@ -96,97 +94,173 @@ stRenderer
 
     assert(PhysicalDeviceCount > 0);
 
-    PhysicalDevice = init::pick_device(PhysicalDevices, PhysicalDeviceCount);
-    assert(PhysicalDevice != VK_NULL_HANDLE);
+    Device.PhysicalDevice = init::pick_device(PhysicalDevices, PhysicalDeviceCount);
+    assert(Device.PhysicalDevice != VK_NULL_HANDLE);
 
-    Device = init::create_device(PhysicalDevice, Surface);
+    Device = init::create_device(Device.PhysicalDevice, Surface);
 
     Deletion.PushFunction([=]{
       vkDestroyDevice(Device.LogicalDevice, nullptr);
     });
 
-    Swapchain = init::create_swapchain(Device, Surface);
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      AcquireSemaphores[i] = init::create_semaphore(Device);
+      ReleaseSemaphores[i] = init::create_semaphore(Device);
+      InFlightFence[i] = init::create_fence(Device);
 
-    Deletion.PushFunction([=]{
-      vkDestroySwapchainKHR(Device.LogicalDevice, Swapchain, nullptr);
-    });
+      Deletion.PushFunction([=]{
+        vkDestroySemaphore(Device.LogicalDevice, AcquireSemaphores[i], nullptr);
+        vkDestroySemaphore(Device.LogicalDevice, ReleaseSemaphores[i], nullptr);
+        vkDestroyFence(Device.LogicalDevice, InFlightFence[i], nullptr);
+      });
+    }
 
-    acquireSemaphore = init::create_semaphore(Device);
-    releaseSemaphore = init::create_semaphore(Device);
-
-    Deletion.PushFunction([=]{
-      vkDestroySemaphore(Device.LogicalDevice, acquireSemaphore, nullptr);
-      vkDestroySemaphore(Device.LogicalDevice, releaseSemaphore, nullptr);
-    });
-
-    VK_CHECK(vkGetSwapchainImagesKHR(Device.LogicalDevice, Swapchain, &SwapchainImageCount, SwapchainImages));
-
-    CommandPool = init::create_command_pool(Device);
+    CommandPool = init::create_command_pool(Device, 0);
 
     Deletion.PushFunction([=]{
       vkDestroyCommandPool(Device.LogicalDevice, CommandPool, nullptr);
     });
 
-    VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-    allocInfo.commandPool = CommandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
+    Swapchain = init::create_swapchain(
+      Device,
+      Surface,
+      SwapchainImageFormat,
+      SwapchainExtent,
+      SwapchainImages,
+      SwapchainImageViews,
+      SwapchainImageCount
+    );
 
-    VK_CHECK(vkAllocateCommandBuffers(Device.LogicalDevice, &allocInfo, &CommandBuffer));
+    SwapchainDeletion.PushFunction([=]{
+      vkDestroySwapchainKHR(Device.LogicalDevice, Swapchain, nullptr);
+    });
+
+    ForwardRenderPass = init::create_render_pass(Device, SwapchainImageFormat);
+
+    SwapchainDeletion.PushFunction([=]{
+      vkDestroyRenderPass(Device.LogicalDevice, ForwardRenderPass, nullptr);
+    });
+
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImageViews[i]);
+
+      SwapchainDeletion.PushFunction([=]{
+        vkDestroyFramebuffer(Device.LogicalDevice, Framebuffers[i], nullptr);
+        vkDestroyImageView(Device.LogicalDevice, SwapchainImageViews[i], nullptr);
+      });
+    }
+
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      CommandBuffers[i] = init::create_command_buffer(Device, CommandPool, ForwardRenderPass, Framebuffers[i], SwapchainExtent);
+      
+      SwapchainDeletion.PushFunction([=]{
+        vkFreeCommandBuffers(Device.LogicalDevice, CommandPool, 1, &CommandBuffers[i]);
+      });
+    }
+  }
+
+  void
+  RecreateSwapchain()
+  {
+    if (Swapchain == VK_NULL_HANDLE)
+    {
+      return;
+    }
+
+    VK_CHECK(vkDeviceWaitIdle(Device.LogicalDevice));
+    SwapchainDeletion.Flush();
+
+    Swapchain = init::create_swapchain(
+      Device,
+      Surface,
+      SwapchainImageFormat,
+      SwapchainExtent,
+      SwapchainImages,
+      SwapchainImageViews,
+      SwapchainImageCount
+    );
+
+    SwapchainDeletion.PushFunction([=]{
+      vkDestroySwapchainKHR(Device.LogicalDevice, Swapchain, nullptr);
+    });
+
+    ForwardRenderPass = init::create_render_pass(Device, SwapchainImageFormat);
+
+    SwapchainDeletion.PushFunction([=]{
+      vkDestroyRenderPass(Device.LogicalDevice, ForwardRenderPass, nullptr);
+    });
+
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImageViews[i]);
+
+      SwapchainDeletion.PushFunction([=]{
+        vkDestroyFramebuffer(Device.LogicalDevice, Framebuffers[i], nullptr);
+        vkDestroyImageView(Device.LogicalDevice, SwapchainImageViews[i], nullptr);
+      });
+    }
+
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      CommandBuffers[i] = init::create_command_buffer(Device, CommandPool, ForwardRenderPass, Framebuffers[i], SwapchainExtent);
+      
+      SwapchainDeletion.PushFunction([=]{
+        vkFreeCommandBuffers(Device.LogicalDevice, CommandPool, 1, &CommandBuffers[i]);
+      });
+    }
   }
 
   void
   Term()
   {
+    VK_CHECK(vkDeviceWaitIdle(Device.LogicalDevice));
+    SwapchainDeletion.Flush();
     Deletion.Flush();
   }
 
   void
   Render()
   {
+    vkWaitForFences(Device.LogicalDevice, 1, &InFlightFence[CurrentFrame], VK_TRUE, ~0ull);
+
     uint32_t imageIndex = 0;
-    VK_CHECK(vkAcquireNextImageKHR(Device.LogicalDevice, Swapchain, ~0ull, acquireSemaphore, VK_NULL_HANDLE, &imageIndex));
+    VK_CHECK(vkAcquireNextImageKHR(Device.LogicalDevice, Swapchain, ~0ull, AcquireSemaphores[CurrentFrame], VK_NULL_HANDLE, &imageIndex));
 
-    VK_CHECK(vkResetCommandPool(Device.LogicalDevice, CommandPool, 0));
-  
-    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (ImagesInFlight[imageIndex] != VK_NULL_HANDLE)
+    {
+      vkWaitForFences(Device.LogicalDevice, 1, &ImagesInFlight[imageIndex], VK_TRUE, ~0ull);
+    }
+    ImagesInFlight[imageIndex] = InFlightFence[CurrentFrame];
 
-    VK_CHECK(vkBeginCommandBuffer(CommandBuffer, &beginInfo));
+    vkResetFences(Device.LogicalDevice, 1, &InFlightFence[CurrentFrame]);
 
-    VkClearColorValue color = { 1.0f, 0.0f, 0.0f, 1.0f };
-    VkImageSubresourceRange renge = {};
-    renge.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    renge.levelCount = 1;
-    renge.layerCount = 1;
-
-    vkCmdClearColorImage(CommandBuffer, SwapchainImages[imageIndex], VK_IMAGE_LAYOUT_GENERAL, &color, 1, &renge);
-
-    VK_CHECK(vkEndCommandBuffer(CommandBuffer));
-
-    VkPipelineStageFlags submitStageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkPipelineStageFlags submitStageFlags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
     VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &acquireSemaphore;
-    submitInfo.pWaitDstStageMask = &submitStageFlags;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &CommandBuffer;
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &releaseSemaphore;
 
-    vkQueueSubmit(Device.PresentQueue.Queue, 1, &submitInfo, VK_NULL_HANDLE);
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &AcquireSemaphores[CurrentFrame];
+    submitInfo.pWaitDstStageMask = submitStageFlags;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &CommandBuffers[imageIndex];
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &ReleaseSemaphores[CurrentFrame];
+
+    VK_CHECK(vkQueueSubmit(Device.Queues[QUEUE_TYPE_GRAPHICS].Queue, 1, &submitInfo, InFlightFence[CurrentFrame]));
 
     VkPresentInfoKHR presentInfo = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &releaseSemaphore;
+    presentInfo.pWaitSemaphores = &ReleaseSemaphores[CurrentFrame];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &Swapchain;
     presentInfo.pImageIndices = &imageIndex;
 
-    VK_CHECK(vkQueuePresentKHR(Device.PresentQueue.Queue, &presentInfo));
+    VK_CHECK(vkQueuePresentKHR(Device.Queues[QUEUE_TYPE_GRAPHICS].Queue, &presentInfo));
 
-    VK_CHECK(vkDeviceWaitIdle(Device.LogicalDevice));
+    CurrentFrame = (CurrentFrame + 1) % SwapchainImageCount;
   }
 
   VkInstance Instance = VK_NULL_HANDLE;
@@ -194,20 +268,31 @@ stRenderer
 
   VkSwapchainKHR Swapchain = VK_NULL_HANDLE;
 
+  uint32_t CurrentFrame = 0;
+
+  VkFormat SwapchainImageFormat = VK_FORMAT_UNDEFINED;
+  VkExtent2D SwapchainExtent = { 0, 0 };
+
   VkCommandPool CommandPool = VK_NULL_HANDLE;
-  VkCommandBuffer CommandBuffer = VK_NULL_HANDLE;
+  VkCommandBuffer CommandBuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
+
+  VkRenderPass ForwardRenderPass = VK_NULL_HANDLE;
 
   VkImage SwapchainImages[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkImageView SwapchainImageViews[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkFramebuffer Framebuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
   uint32_t SwapchainImageCount = ArrayCount(SwapchainImages);
 
-  VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
-  VkSemaphore releaseSemaphore = VK_NULL_HANDLE;
+  VkSemaphore AcquireSemaphores[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkSemaphore ReleaseSemaphores[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkFence InFlightFence[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkFence ImagesInFlight[MAX_SWAPCHAIN_IMAGE_COUNT];
 
   VkPhysicalDevice PhysicalDevices[MAX_PHYSICAL_DEVICE_COUNT];
   uint32_t PhysicalDeviceCount = ArrayCount(PhysicalDevices);
 
-  VkPhysicalDevice PhysicalDevice;
   stDevice Device;
 
   stDeletionQueue Deletion;
+  stDeletionQueue SwapchainDeletion;
 };
