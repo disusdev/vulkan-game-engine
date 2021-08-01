@@ -7,6 +7,9 @@
 #include <functional>
 #include <optional>
 #include <set>
+#include <array>
+
+#include <glm/glm.hpp>
 
 typedef double f64;
 

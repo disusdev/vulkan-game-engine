@@ -16,7 +16,7 @@ project "engine"
     files { "./src/**.h", "./src/**.cpp" }
 
     links { "$(VULKAN_SDK)/lib/vulkan-1.lib" }
-    includedirs { "$(VULKAN_SDK)/include" }
+    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/" }
 
     filter "configurations:Debug"
         symbols "On"
@@ -37,12 +37,7 @@ project "resources"
         prebuildcommands { 'pushd .bin\nIF NOT EXIST data mklink /j "data" "../data"\npopd' }
         prebuildmessage "Create folder link..."
 
-    filter 'files:**.frag'
-        buildmessage 'Compiling %{wks.location}%{file.relpath}'
-        buildcommands '"$(VULKAN_SDK)/Bin/glslangValidator.exe" -V "%{wks.location}%{file.relpath}" -o "%{file.directory}%{file.name}.spv"'
-        buildoutputs "%{file.directory}%{file.name}.spv"
-    
-    filter 'files:**.vert'
+    filter { 'files:**.frag or files:**.vert' }
         buildmessage 'Compiling %{wks.location}%{file.relpath}'
         buildcommands '"$(VULKAN_SDK)/Bin/glslangValidator.exe" -V "%{wks.location}%{file.relpath}" -o "%{file.directory}%{file.name}.spv"'
         buildoutputs "%{file.directory}%{file.name}.spv"

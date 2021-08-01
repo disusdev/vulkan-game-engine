@@ -387,7 +387,8 @@ create_command_buffer(
   VkRenderPass renderPass,
   VkFramebuffer framebuffer,
   VkExtent2D windowSize,
-  const stPipeline& pipeline)
+  const stPipeline& pipeline,
+  std::function<void(VkCommandBuffer, VkPipeline)> darwCommand)
 {
   VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
 
@@ -419,9 +420,7 @@ create_command_buffer(
 
   // draw call
   {
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.Pipeline);
-
-    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    darwCommand(commandBuffer, pipeline.Pipeline);
   }
 
   vkCmdEndRenderPass(commandBuffer);
@@ -482,11 +481,15 @@ create_pipeline(
 
   VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+  auto bindingDescription = stVertex::GetBindingDescription();
+  auto attributeDescriptions = stVertex::GetAttributeDescriptions();
+
+  // bindings
   VkPipelineVertexInputStateCreateInfo vertexInputInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-  vertexInputInfo.vertexBindingDescriptionCount = 0;
-  vertexInputInfo.pVertexBindingDescriptions = nullptr;
-  vertexInputInfo.vertexAttributeDescriptionCount = 0;
-  vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
   VkPipelineInputAssemblyStateCreateInfo inputAssembly = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
   inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -602,6 +605,41 @@ create_pipeline(
   vkDestroyShaderModule(device.LogicalDevice, vertShaderModule, nullptr);
 
   return pipeline;
+}
+
+template <typename T>
+VkBuffer
+create_vertex_buffer(
+  stDevice device,
+  uint32_t count)
+{
+  VkBufferCreateInfo createInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+  createInfo.size = sizeof(T) * count;
+  createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VkBuffer buffer;
+  VK_CHECK(vkCreateBuffer(device.LogicalDevice, &createInfo, nullptr, &buffer));
+
+  return buffer;
+}
+
+uint32_t
+find_memory_type(
+  stDevice device,
+  uint32_t typeFilter,
+  VkMemoryPropertyFlags properties)
+{
+  VkPhysicalDeviceMemoryProperties memProperties;
+  vkGetPhysicalDeviceMemoryProperties(device.PhysicalDevice, &memProperties);
+
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+      if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+          return i;
+      }
+  }
+
+  assert(false);
 }
 
 }

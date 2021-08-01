@@ -9,6 +9,43 @@
   assert(result == VK_SUCCESS);\
 }
 
+struct
+stVertex
+{
+  glm::vec2 Position = { 0.0f, 0.0f };
+  glm::vec3 Color = { 0.0f, 0.0f, 0.0f };
+
+  static VkVertexInputBindingDescription
+  GetBindingDescription()
+  {
+    VkVertexInputBindingDescription bindingDescription = {};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(stVertex);
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    
+
+    return bindingDescription;
+  }
+
+  static std::array<VkVertexInputAttributeDescription, 2>
+  GetAttributeDescriptions()
+  {
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(stVertex, Position);
+
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(stVertex, Color);
+
+    return attributeDescriptions;
+  }
+};
+
 enum
 enQueueType : int
 {
@@ -110,6 +147,9 @@ stRenderer
 
   VkRenderPass ForwardRenderPass = VK_NULL_HANDLE;
   stPipeline GraphicsPipeline = {};
+
+  VkBuffer VertexBuffer = VK_NULL_HANDLE;
+  VkDeviceMemory VertexBufferMemory = VK_NULL_HANDLE;
 
   VkImage SwapchainImages[MAX_SWAPCHAIN_IMAGE_COUNT];
   VkImageView SwapchainImageViews[MAX_SWAPCHAIN_IMAGE_COUNT];
@@ -222,9 +262,48 @@ stRenderer::CreateSwapchain()
     vkDestroyPipelineLayout(Device.LogicalDevice, GraphicsPipeline.Layout, nullptr);
   });
 
+  stVertex vertices[] = {
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+  };
+
+  VertexBuffer = init::create_vertex_buffer<stVertex>(Device, ArrayCount(vertices));
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(Device.LogicalDevice, VertexBuffer, &memRequirements);
+  
+  VkMemoryAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = init::find_memory_type(Device, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  VK_CHECK(vkAllocateMemory(Device.LogicalDevice, &allocInfo, nullptr, &VertexBufferMemory));
+
+  VK_CHECK(vkBindBufferMemory(Device.LogicalDevice, VertexBuffer, VertexBufferMemory, 0));
+
+  SwapchainDeletion.PushFunction([=]{
+    vkDestroyBuffer(Device.LogicalDevice, VertexBuffer, nullptr);
+    vkFreeMemory(Device.LogicalDevice, VertexBufferMemory, nullptr);
+  });
+
+  void* data;
+  vkMapMemory(Device.LogicalDevice, VertexBufferMemory, 0, ArrayCount(vertices) * sizeof(stVertex), 0, &data);
+    memcpy(data, vertices, ArrayCount(vertices) * sizeof(stVertex));
+  vkUnmapMemory(Device.LogicalDevice, VertexBufferMemory);
+
   for (size_t i = 0; i < SwapchainImageCount; i++)
   {
-    CommandBuffers[i] = init::create_command_buffer(Device, CommandPool, ForwardRenderPass, Framebuffers[i], SwapchainExtent, GraphicsPipeline);
+    CommandBuffers[i] = init::create_command_buffer(Device, CommandPool, ForwardRenderPass, Framebuffers[i], SwapchainExtent, GraphicsPipeline,
+    [=](VkCommandBuffer cb, VkPipeline gp)
+    {
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, gp);
+
+      VkBuffer vertexBuffers[] = { VertexBuffer };
+      VkDeviceSize offsets[] = {0};
+      vkCmdBindVertexBuffers(cb, 0, 1, vertexBuffers, offsets);
+
+      vkCmdDraw(cb, ArrayCount(vertices), 1, 0, 0);
+    });
     
     SwapchainDeletion.PushFunction([=]{
       vkFreeCommandBuffers(Device.LogicalDevice, CommandPool, 1, &CommandBuffers[i]);
