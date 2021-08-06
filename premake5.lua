@@ -13,10 +13,9 @@ project "engine"
     targetdir ".bin/%{cfg.buildcfg}"
     objdir ".obj/%{cfg.buildcfg}"
 
-    files { "./src/**.h", "./src/**.cpp" }
+    files { "./src/**.h", "./src/**.cpp", "./ext/meshoptimizer/src/**.cpp"}
 
-    links { "$(VULKAN_SDK)/lib/vulkan-1.lib" }
-    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/" }
+    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/", "./ext/volk/", "./ext/meshoptimizer/src/", "./ext/meshoptimizer/extern/", "./ext/stb/" }
 
     filter "configurations:Debug"
         symbols "On"
@@ -34,7 +33,7 @@ project "resources"
     files { "./data/**" }
 
     configuration "windows"
-        prebuildcommands { 'pushd .bin\nIF NOT EXIST data mklink /j "data" "../data"\npopd' }
+        prebuildcommands { 'pushd ".bin/%{cfg.buildcfg}" && IF NOT EXIST data mklink /j "data" "../../data" && popd' }
         prebuildmessage "Create folder link..."
 
     filter { 'files:**.frag or files:**.vert' }

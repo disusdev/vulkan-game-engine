@@ -380,54 +380,38 @@ create_fence(
   return fence;
 }
 
-VkCommandBuffer
-create_command_buffer(
+void
+create_command_buffers(
   const stDevice& device,
   VkCommandPool commandPool,
-  VkRenderPass renderPass,
-  VkFramebuffer framebuffer,
-  VkExtent2D windowSize,
-  const stPipeline& pipeline,
-  std::function<void(VkCommandBuffer, VkPipeline)> darwCommand)
+  const std::initializer_list<std::function<void(VkCommandBuffer, uint32_t)>> darwCommands,
+  VkCommandBuffer* commandBuffers = nullptr,
+  uint32_t count = 0,
+  VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+  VkCommandBufferUsageFlags flags = 0)
 {
-  VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
-
   VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
   allocInfo.commandPool = commandPool;
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = 1;
+  allocInfo.level = level;
+  allocInfo.commandBufferCount = count;
 
-  VK_CHECK(vkAllocateCommandBuffers(device.LogicalDevice, &allocInfo, &commandBuffer));
+  VK_CHECK(vkAllocateCommandBuffers(device.LogicalDevice, &allocInfo, commandBuffers));
 
-  VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-  beginInfo.flags = 0;
-  beginInfo.pInheritanceInfo = nullptr;
-
-  VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
-
-  VkClearColorValue color = { 0.3f, 0.3f, 0.3f, 1.0f };
-  VkClearValue clearValue = { color };
-
-  VkRenderPassBeginInfo renderPassBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-  renderPassBeginInfo.renderPass = renderPass;
-  renderPassBeginInfo.framebuffer = framebuffer;
-  renderPassBeginInfo.renderArea.offset = { 0, 0 };
-  renderPassBeginInfo.renderArea.extent = windowSize;
-  renderPassBeginInfo.clearValueCount = 1;
-  renderPassBeginInfo.pClearValues = &clearValue;
-
-  vkCmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-  // draw call
+  for (uint32_t i = 0; i < count; i++)
   {
-    darwCommand(commandBuffer, pipeline.Pipeline);
+    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    beginInfo.flags = flags;
+    beginInfo.pInheritanceInfo = nullptr;
+
+    VK_CHECK(vkBeginCommandBuffer(commandBuffers[i], &beginInfo));
+
+    for (auto&& command : darwCommands)
+    {
+      command(commandBuffers[i], i);
+    }
+
+    VK_CHECK(vkEndCommandBuffer(commandBuffers[i]));
   }
-
-  vkCmdEndRenderPass(commandBuffer);
-
-  VK_CHECK(vkEndCommandBuffer(commandBuffer));
-
-  return commandBuffer;
 }
 
 VkShaderModule
@@ -519,7 +503,7 @@ create_pipeline(
   rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
   rasterizer.lineWidth = 1.0f;
   rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;// VK_FRONT_FACE_CLOCKWISE;
   rasterizer.depthBiasEnable = VK_FALSE;
   rasterizer.depthBiasConstantFactor = 0.0f;
   rasterizer.depthBiasClamp = 0.0f;
@@ -574,9 +558,22 @@ create_pipeline(
   dynamicState.dynamicStateCount = ArrayCount(dynamicStates);
   dynamicState.pDynamicStates = dynamicStates;
 
+  VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+  uboLayoutBinding.binding = 0;
+  uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  uboLayoutBinding.descriptorCount = 1;
+  uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+  VkDescriptorSetLayoutCreateInfo layoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+  layoutInfo.bindingCount = 1;
+  layoutInfo.pBindings = &uboLayoutBinding;
+
+  VK_CHECK(vkCreateDescriptorSetLayout(device.LogicalDevice, &layoutInfo, nullptr, &pipeline.DescriptorSet));
+
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-  pipelineLayoutInfo.setLayoutCount = 0;
-  pipelineLayoutInfo.pSetLayouts = nullptr;
+  pipelineLayoutInfo.setLayoutCount = 1;
+  pipelineLayoutInfo.pSetLayouts = &pipeline.DescriptorSet;
   pipelineLayoutInfo.pushConstantRangeCount = 0;
   pipelineLayoutInfo.pPushConstantRanges = nullptr;
 
@@ -601,27 +598,10 @@ create_pipeline(
 
   VK_CHECK(vkCreateGraphicsPipelines(device.LogicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline.Pipeline));
 
-  vkDestroyShaderModule(device.LogicalDevice, fragShaderModule, nullptr);
   vkDestroyShaderModule(device.LogicalDevice, vertShaderModule, nullptr);
+  vkDestroyShaderModule(device.LogicalDevice, fragShaderModule, nullptr);
 
   return pipeline;
-}
-
-template <typename T>
-VkBuffer
-create_vertex_buffer(
-  stDevice device,
-  uint32_t count)
-{
-  VkBufferCreateInfo createInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-  createInfo.size = sizeof(T) * count;
-  createInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-  createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-  VkBuffer buffer;
-  VK_CHECK(vkCreateBuffer(device.LogicalDevice, &createInfo, nullptr, &buffer));
-
-  return buffer;
 }
 
 uint32_t
@@ -640,6 +620,468 @@ find_memory_type(
   }
 
   assert(false);
+  return 0;
+}
+
+void
+create_buffer(
+  stDevice device,
+  VkDeviceSize size,
+  VkBufferUsageFlags usage,
+  VkMemoryPropertyFlags properties,
+  stBuffer& buffer)
+{
+  VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+  bufferInfo.size = size;
+  bufferInfo.usage = usage;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VK_CHECK(vkCreateBuffer(device.LogicalDevice, &bufferInfo, nullptr, &buffer.Buffer));
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device.LogicalDevice, buffer.Buffer, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = find_memory_type(device, memRequirements.memoryTypeBits, properties);
+
+  VK_CHECK(vkAllocateMemory(device.LogicalDevice, &allocInfo, nullptr, &buffer.Memory));
+
+  vkBindBufferMemory(device.LogicalDevice, buffer.Buffer, buffer.Memory, 0);
+}
+
+VkCommandBuffer
+begin_single_time_commands(
+  const stDevice& device,
+  VkCommandPool commandPool)
+{
+  VkCommandBufferAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = commandPool;
+  allocInfo.commandBufferCount = 1;
+
+  VkCommandBuffer commandBuffer;
+  vkAllocateCommandBuffers(device.LogicalDevice, &allocInfo, &commandBuffer);
+
+  VkCommandBufferBeginInfo beginInfo{};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+  return commandBuffer;
+}
+
+void
+end_single_time_command(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  VkCommandBuffer commandBuffer
+)
+{
+  vkEndCommandBuffer(commandBuffer);
+  
+  VkSubmitInfo submitInfo{};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+  
+  vkQueueSubmit(device.Queues[QUEUE_TYPE_GRAPHICS].Queue, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(device.Queues[QUEUE_TYPE_GRAPHICS].Queue);
+  
+  vkFreeCommandBuffers(device.LogicalDevice, commandPool, 1, &commandBuffer);
+}
+
+void
+copy_buffer(
+  const stDevice& device,
+  VkBuffer srcBuffer,
+  VkBuffer dstBuffer,
+  VkDeviceSize size,
+  VkCommandPool commandPool)
+{
+  VkCommandBuffer commandBuffer = begin_single_time_commands(device, commandPool);
+
+  VkBufferCopy copyRegion = {};
+  copyRegion.size = size;
+  vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+
+  end_single_time_command(device, commandPool, commandBuffer);
+}
+
+bool
+load_mesh(
+  stMesh& mesh,
+  const char* path
+)
+{
+  fastObjMesh* obj = fast_obj_read(path);
+	if (!obj)
+	{
+		printf("Error loading %s: file not found\n", path);
+		return false;
+	}
+
+	size_t total_indices = 0;
+
+	for (unsigned int i = 0; i < obj->face_count; ++i)
+		total_indices += 3 * (obj->face_vertices[i] - 2);
+
+	std::vector<stVertex> vertices(total_indices);
+
+	size_t vertex_offset = 0;
+	size_t index_offset = 0;
+
+	for (unsigned int i = 0; i < obj->face_count; ++i)
+	{
+		for (unsigned int j = 0; j < obj->face_vertices[i]; ++j)
+		{
+			fastObjIndex gi = obj->indices[index_offset + j];
+
+			stVertex v =
+			{
+			    {obj->positions[gi.p * 3 + 0],
+			    obj->positions[gi.p * 3 + 1],
+			    obj->positions[gi.p * 3 + 2]},
+			    {obj->normals[gi.n * 3 + 0],
+			    obj->normals[gi.n * 3 + 1],
+			    obj->normals[gi.n * 3 + 2]},
+			    {obj->texcoords[gi.t * 2 + 0],
+			    obj->texcoords[gi.t * 2 + 1]},
+			};
+
+			// triangulate polygon on the fly; offset-3 is always the first polygon vertex
+			if (j >= 3)
+			{
+				vertices[vertex_offset + 0] = vertices[vertex_offset - 3];
+				vertices[vertex_offset + 1] = vertices[vertex_offset - 1];
+				vertex_offset += 2;
+			}
+
+			vertices[vertex_offset] = v;
+			vertex_offset++;
+		}
+
+		index_offset += obj->face_vertices[i];
+	}
+
+	fast_obj_destroy(obj);
+
+	std::vector<unsigned int> remap(total_indices);
+
+	size_t total_vertices = meshopt_generateVertexRemap(&remap[0], NULL, total_indices, &vertices[0], total_indices, sizeof(stVertex));
+
+	mesh.Indices.resize(total_indices);
+	meshopt_remapIndexBuffer(&mesh.Indices[0], NULL, total_indices, &remap[0]);
+
+	mesh.Vertices.resize(total_vertices);
+	meshopt_remapVertexBuffer(&mesh.Vertices[0], &vertices[0], total_indices, sizeof(stVertex), &remap[0]);
+
+	return true;
+}
+
+void
+create_uniform_buffer(
+  const stDevice& device,
+  stBuffer* buffers,
+  uint32_t count
+)
+{
+  VkDeviceSize bufferSize = sizeof(stUniformBufferObject);
+
+  for (size_t i = 0; i < count; i++)
+  {
+    create_buffer(
+      device,
+      bufferSize,
+      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      buffers[i]
+    );
+  }
+}
+
+void
+update_uniform_buffer(
+  const stDevice& device,
+  stBuffer* buffers,
+  double delta,
+  uint32_t index,
+  VkExtent2D windowSize
+)
+{
+  static float time = 0.0f;
+  time += (float) delta * 0.000000001f; // from ns to s
+
+  stUniformBufferObject ubo = {};
+  ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+  ubo.View = glm::lookAt(glm::vec3(2.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+  ubo.Proj = glm::perspective(glm::radians(75.0f), windowSize.width / (float) windowSize.height, 0.1f, 10.0f);
+  ubo.Proj[1][1] *= -1;
+
+  void* data;
+  vkMapMemory(device.LogicalDevice, buffers[index].Memory, 0, sizeof(ubo), 0, &data);
+    memcpy(data, &ubo, sizeof(ubo));
+  vkUnmapMemory(device.LogicalDevice, buffers[index].Memory);
+}
+
+VkDescriptorPool
+create_descriptor_pool(
+  const stDevice& device,
+  uint32_t descriptorCount
+)
+{
+  VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER };
+  poolSize.descriptorCount = descriptorCount;
+
+  VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+  poolInfo.poolSizeCount = 1;
+  poolInfo.pPoolSizes = &poolSize;
+  poolInfo.maxSets = descriptorCount;
+
+  VkDescriptorPool descriptorPool;
+
+  vkCreateDescriptorPool(device.LogicalDevice, &poolInfo, nullptr, &descriptorPool);
+
+  return descriptorPool;
+}
+
+void
+create_descriptor_sets(
+  const stDevice& device,
+  const stPipeline& pipeline,
+  VkDescriptorPool descriptorPool,
+  VkDescriptorSet* descriptorSets,
+  stBuffer* uniformBuffers,
+  uint32_t count)
+{
+  std::vector<VkDescriptorSetLayout> layouts(count, pipeline.DescriptorSet);
+
+  VkDescriptorSetAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = descriptorPool;
+  allocInfo.descriptorSetCount = count;
+  allocInfo.pSetLayouts = layouts.data();
+
+  vkAllocateDescriptorSets(device.LogicalDevice, &allocInfo, descriptorSets);
+
+  for (size_t i = 0; i < count; i++)
+  {
+    VkDescriptorBufferInfo bufferInfo{};
+    bufferInfo.buffer = uniformBuffers[i].Buffer;
+    bufferInfo.offset = 0;
+    bufferInfo.range = sizeof(stUniformBufferObject);
+
+    VkWriteDescriptorSet descriptorWrite{};
+    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrite.dstSet = descriptorSets[i];
+    descriptorWrite.dstBinding = 0;
+    descriptorWrite.dstArrayElement = 0;
+
+    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrite.descriptorCount = 1;
+
+    descriptorWrite.pBufferInfo = &bufferInfo;
+    descriptorWrite.pImageInfo = nullptr; // Optional
+    descriptorWrite.pTexelBufferView = nullptr; // Optional
+
+    vkUpdateDescriptorSets(device.LogicalDevice, 1, &descriptorWrite, 0, nullptr);
+  }
+}
+
+stImage
+create_image(
+  const stDevice& device,
+  uint32_t width,
+  uint32_t height,
+  VkFormat format,
+  VkImageTiling tiling,
+  VkImageUsageFlags usage,
+  VkMemoryPropertyFlags properties)
+{
+  stImage image = {};
+
+  VkImageCreateInfo imageInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = static_cast<uint32_t>(width);
+  imageInfo.extent.height = static_cast<uint32_t>(height);
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.flags = 0; // Optional
+  
+  VK_CHECK(vkCreateImage(device.LogicalDevice, &imageInfo, nullptr, &image.Image));
+
+  VkMemoryRequirements memRequirements;
+  vkGetImageMemoryRequirements(device.LogicalDevice, image.Image, &memRequirements);
+  
+  VkMemoryAllocateInfo allocInfo{};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = find_memory_type(device, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  
+  VK_CHECK(vkAllocateMemory(device.LogicalDevice, &allocInfo, nullptr, &image.Memory));
+  
+  vkBindImageMemory(device.LogicalDevice, image.Image, image.Memory, 0);
+
+  return image;
+}
+
+void
+transition_image_layout(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  VkImage image,
+  VkFormat format,
+  VkImageLayout oldLayout,
+  VkImageLayout newLayout
+)
+{
+  VkCommandBuffer commandBuffer = begin_single_time_commands(device, commandPool);
+
+  VkImageMemoryBarrier barrier{};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = oldLayout;
+  barrier.newLayout = newLayout;
+
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+  barrier.image = image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+
+  VkPipelineStageFlags sourceStage;
+  VkPipelineStageFlags destinationStage;
+  
+  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+  {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  
+    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  
+    sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  } else {
+      assert(false);
+  }
+  
+  vkCmdPipelineBarrier(
+      commandBuffer,
+      sourceStage, destinationStage,
+      0,
+      0, nullptr,
+      0, nullptr,
+      1, &barrier
+  );
+
+  end_single_time_command(device, commandPool, commandBuffer);
+}
+
+void
+copy_buffer_to_image(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  VkBuffer buffer,
+  VkImage image,
+  uint32_t width,
+  uint32_t height)
+{
+  VkCommandBuffer commandBuffer = begin_single_time_commands(device, commandPool);
+
+  VkBufferImageCopy region{};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+  
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  
+  region.imageOffset = {0, 0, 0};
+  region.imageExtent = {
+      width,
+      height,
+      1
+  };
+
+  vkCmdCopyBufferToImage(
+    commandBuffer,
+    buffer,
+    image,
+    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    1,
+    &region
+  );
+
+  end_single_time_command(device, commandPool, commandBuffer);
+}
+
+stImage
+create_texture_image(
+  const stDevice& device,
+  VkCommandPool commandPool
+)
+{
+  int texWidth, texHeight, texChannels;
+  stbi_uc* pixels = stbi_load("./data/models/cube/default.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+  VkDeviceSize imageSize = texWidth * texHeight * 4;
+  assert(pixels);
+
+  stBuffer staging;
+
+  create_buffer(
+    device,
+    imageSize,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+    staging
+  ); 
+
+  void* data;
+  vkMapMemory(device.LogicalDevice, staging.Memory, 0, imageSize, 0, &data);
+      memcpy(data, pixels, static_cast<size_t>(imageSize));
+  vkUnmapMemory(device.LogicalDevice, staging.Memory);
+
+  stbi_image_free(pixels);
+
+  stImage image = create_image(
+    device,
+    texWidth,
+    texHeight,
+    VK_FORMAT_R8G8B8A8_SRGB,
+    VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+    VK_IMAGE_USAGE_SAMPLED_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  );
+
+  transition_image_layout(device, commandPool, image.Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+  copy_buffer_to_image(device, commandPool, staging.Buffer, image.Image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+
+  transition_image_layout(device, commandPool, image.Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  vkDestroyBuffer(device.LogicalDevice, staging.Buffer, nullptr);
+  vkFreeMemory(device.LogicalDevice, staging.Memory, nullptr);
+
+  return image;
 }
 
 }

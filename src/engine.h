@@ -53,7 +53,7 @@ engine
         timer += FIXED_TIME;
       }
 
-      Renderer.Render();
+      Renderer.Render(delta);
 
       sys::SwapBuffers(Window);
     }

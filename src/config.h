@@ -4,7 +4,9 @@
 #define PLATFORM_WIN 1
 
 #if PLATFORM_WIN
-#define NOMINMAX
+#ifndef _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 #endif
 
 #if defined(DEBUG)

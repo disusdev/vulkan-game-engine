@@ -1,5 +1,7 @@
 
-#include "vulkan/vulkan.h"
+//#include "vulkan/vulkan.h"
+#include <volk.c>
+
 
 #define ArrayCount(Array) (sizeof(Array) / sizeof((Array)[0]))
 
@@ -12,8 +14,9 @@
 struct
 stVertex
 {
-  glm::vec2 Position = { 0.0f, 0.0f };
-  glm::vec3 Color = { 0.0f, 0.0f, 0.0f };
+	alignas(16) glm::vec3 Position = { 0.0f, 0.0f, 0.0f };
+	alignas(16) glm::vec3 Normal = { 0.0f, 0.0f, 0.0f };
+	alignas(8)  glm::vec2 TexCoord = { 0.0f, 0.0f };
 
   static VkVertexInputBindingDescription
   GetBindingDescription()
@@ -22,25 +25,29 @@ stVertex
     bindingDescription.binding = 0;
     bindingDescription.stride = sizeof(stVertex);
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    
 
     return bindingDescription;
   }
 
-  static std::array<VkVertexInputAttributeDescription, 2>
+  static std::array<VkVertexInputAttributeDescription, 3>
   GetAttributeDescriptions()
   {
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
 
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[0].offset = offsetof(stVertex, Position);
 
     attributeDescriptions[1].binding = 0;
     attributeDescriptions[1].location = 1;
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[1].offset = offsetof(stVertex, Color);
+    attributeDescriptions[1].offset = offsetof(stVertex, Normal);
+
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[2].offset = offsetof(stVertex, TexCoord);
 
     return attributeDescriptions;
   }
@@ -75,6 +82,36 @@ stPipeline
 {
   VkPipeline Pipeline = VK_NULL_HANDLE;
   VkPipelineLayout Layout = VK_NULL_HANDLE;
+  VkDescriptorSetLayout DescriptorSet = VK_NULL_HANDLE;
+};
+
+struct
+stUniformBufferObject
+{
+  alignas(16) glm::mat4 Model;
+  alignas(16) glm::mat4 View;
+  alignas(16) glm::mat4 Proj;
+};
+
+struct
+stBuffer
+{
+  VkBuffer Buffer = VK_NULL_HANDLE;
+  VkDeviceMemory Memory = VK_NULL_HANDLE;
+};
+
+struct
+stImage
+{
+  VkImage Image = VK_NULL_HANDLE;
+  VkDeviceMemory Memory = VK_NULL_HANDLE;
+};
+
+struct
+stMesh
+{
+  std::vector<stVertex> Vertices;
+  std::vector<uint32_t> Indices;
 };
 
 VkSurfaceKHR
@@ -130,7 +167,7 @@ stRenderer
   Term();
 
   void
-  Render();
+  Render(double delta = 0.0f);
 
   VkInstance Instance = VK_NULL_HANDLE;
   VkSurfaceKHR Surface = VK_NULL_HANDLE;
@@ -148,8 +185,16 @@ stRenderer
   VkRenderPass ForwardRenderPass = VK_NULL_HANDLE;
   stPipeline GraphicsPipeline = {};
 
-  VkBuffer VertexBuffer = VK_NULL_HANDLE;
-  VkDeviceMemory VertexBufferMemory = VK_NULL_HANDLE;
+  stBuffer VertexBuffer = {};
+
+  stBuffer IndexBuffer = {};
+
+  stBuffer UniformBuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
+
+  VkDescriptorPool DescriptorPool = VK_NULL_HANDLE;
+  VkDescriptorSet DescriptorSets[MAX_SWAPCHAIN_IMAGE_COUNT];
+
+  stImage TexImage = {};
 
   VkImage SwapchainImages[MAX_SWAPCHAIN_IMAGE_COUNT];
   VkImageView SwapchainImageViews[MAX_SWAPCHAIN_IMAGE_COUNT];
@@ -174,7 +219,11 @@ void
 stRenderer::Init(
   const stWindow& window)
 {
+  VK_CHECK(volkInitialize());
+
   Instance = init::create_instance();
+
+  volkLoadInstance(Instance);
 
   Surface = CreateSurface(Instance, window);
 
@@ -219,6 +268,13 @@ stRenderer::Init(
     vkDestroyCommandPool(Device.LogicalDevice, CommandPool, nullptr);
   });
 
+  TexImage = init::create_texture_image(Device, CommandPool);
+
+  Deletion.PushFunction([=]{
+    vkDestroyImage(Device.LogicalDevice, TexImage.Image, nullptr);
+    vkFreeMemory(Device.LogicalDevice, TexImage.Memory, nullptr);
+  });
+
   CreateSwapchain();
 }
 
@@ -258,57 +314,169 @@ stRenderer::CreateSwapchain()
   GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass);
 
   SwapchainDeletion.PushFunction([=]{
+    vkDestroyDescriptorSetLayout(Device.LogicalDevice, GraphicsPipeline.DescriptorSet, nullptr);
     vkDestroyPipeline(Device.LogicalDevice, GraphicsPipeline.Pipeline, nullptr);
     vkDestroyPipelineLayout(Device.LogicalDevice, GraphicsPipeline.Layout, nullptr);
   });
 
-  stVertex vertices[] = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
-  };
+  stMesh mesh;
 
-  VertexBuffer = init::create_vertex_buffer<stVertex>(Device, ArrayCount(vertices));
+  //mesh.Vertices.push_back({{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}});
+  //mesh.Vertices.push_back({{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}});
+  //mesh.Vertices.push_back({{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}});
+  //mesh.Vertices.push_back({{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}});
 
-  VkMemoryRequirements memRequirements;
-  vkGetBufferMemoryRequirements(Device.LogicalDevice, VertexBuffer, &memRequirements);
-  
-  VkMemoryAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-  allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = init::find_memory_type(Device, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  //mesh.Indices.resize(6);
+  //mesh.Indices[0] = 0;
+  //mesh.Indices[1] = 1;
+  //mesh.Indices[2] = 2;
+  //mesh.Indices[3] = 2;
+  //mesh.Indices[4] = 3;
+  //mesh.Indices[5] = 0;
 
-  VK_CHECK(vkAllocateMemory(Device.LogicalDevice, &allocInfo, nullptr, &VertexBufferMemory));
+  init::load_mesh(mesh, "./data/models/cube/cube.obj");
+  // init::load_mesh(mesh, "./data/models/bunny/bunny.obj");
 
-  VK_CHECK(vkBindBufferMemory(Device.LogicalDevice, VertexBuffer, VertexBufferMemory, 0));
+  { // CREATE VERTEX BUFFER
+    VkDeviceSize bufferSize = sizeof(mesh.Vertices[0]) * mesh.Vertices.size();
 
-  SwapchainDeletion.PushFunction([=]{
-    vkDestroyBuffer(Device.LogicalDevice, VertexBuffer, nullptr);
-    vkFreeMemory(Device.LogicalDevice, VertexBufferMemory, nullptr);
-  });
+    stBuffer stagingBuffer = {};
+    init::create_buffer(
+      Device,
+      bufferSize,
+      VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer
+    );
 
-  void* data;
-  vkMapMemory(Device.LogicalDevice, VertexBufferMemory, 0, ArrayCount(vertices) * sizeof(stVertex), 0, &data);
-    memcpy(data, vertices, ArrayCount(vertices) * sizeof(stVertex));
-  vkUnmapMemory(Device.LogicalDevice, VertexBufferMemory);
+    void* data;
+    vkMapMemory(Device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
+        memcpy(data, mesh.Vertices.data(), (size_t) bufferSize);
+    vkUnmapMemory(Device.LogicalDevice, stagingBuffer.Memory);
+
+    init::create_buffer(
+      Device,
+      bufferSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VertexBuffer
+    );
+
+    SwapchainDeletion.PushFunction([=]{
+      vkDestroyBuffer(Device.LogicalDevice, VertexBuffer.Buffer, nullptr);
+      vkFreeMemory(Device.LogicalDevice, VertexBuffer.Memory, nullptr);
+    });
+
+    init::copy_buffer(Device, stagingBuffer.Buffer, VertexBuffer.Buffer, bufferSize, CommandPool);
+
+    vkDestroyBuffer(Device.LogicalDevice, stagingBuffer.Buffer, nullptr);
+    vkFreeMemory(Device.LogicalDevice, stagingBuffer.Memory, nullptr);
+  }
+
+  { // CREATE INDEX BUFFER
+    VkDeviceSize bufferSize = sizeof(mesh.Indices[0]) * mesh.Indices.size();
+
+    stBuffer stagingBuffer = {};
+    init::create_buffer(
+      Device,
+      bufferSize,
+      VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer
+    );
+
+    void* data;
+    vkMapMemory(Device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
+        memcpy(data, mesh.Indices.data(), (size_t) bufferSize);
+    vkUnmapMemory(Device.LogicalDevice, stagingBuffer.Memory);
+
+    init::create_buffer(
+      Device,
+      bufferSize,
+      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, IndexBuffer
+    );
+
+    SwapchainDeletion.PushFunction([=]{
+      vkDestroyBuffer(Device.LogicalDevice, IndexBuffer.Buffer, nullptr);
+      vkFreeMemory(Device.LogicalDevice, IndexBuffer.Memory, nullptr);
+    });
+
+    init::copy_buffer(Device, stagingBuffer.Buffer, IndexBuffer.Buffer, bufferSize, CommandPool);
+
+    vkDestroyBuffer(Device.LogicalDevice, stagingBuffer.Buffer, nullptr);
+    vkFreeMemory(Device.LogicalDevice, stagingBuffer.Memory, nullptr);
+  }
+
+  //init::create_uniform_buffer(Device, UniformBuffers, SwapchainImageCount);
+
+  VkDeviceSize bufferSize = sizeof(stUniformBufferObject);
 
   for (size_t i = 0; i < SwapchainImageCount; i++)
   {
-    CommandBuffers[i] = init::create_command_buffer(Device, CommandPool, ForwardRenderPass, Framebuffers[i], SwapchainExtent, GraphicsPipeline,
-    [=](VkCommandBuffer cb, VkPipeline gp)
-    {
-      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, gp);
-
-      VkBuffer vertexBuffers[] = { VertexBuffer };
-      VkDeviceSize offsets[] = {0};
-      vkCmdBindVertexBuffers(cb, 0, 1, vertexBuffers, offsets);
-
-      vkCmdDraw(cb, ArrayCount(vertices), 1, 0, 0);
-    });
-    
-    SwapchainDeletion.PushFunction([=]{
-      vkFreeCommandBuffers(Device.LogicalDevice, CommandPool, 1, &CommandBuffers[i]);
-    });
+    init::create_buffer(
+      Device,
+      bufferSize,
+      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      UniformBuffers[i]
+    );
   }
+
+  SwapchainDeletion.PushFunction([=]{
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      vkDestroyBuffer(Device.LogicalDevice, UniformBuffers[i].Buffer, nullptr);
+      vkFreeMemory(Device.LogicalDevice, UniformBuffers[i].Memory, nullptr);
+    }
+  });
+
+  DescriptorPool = init::create_descriptor_pool(Device, SwapchainImageCount);
+
+  SwapchainDeletion.PushFunction([=]{
+    vkDestroyDescriptorPool(Device.LogicalDevice, DescriptorPool, nullptr);
+  });
+
+  init::create_descriptor_sets(Device, GraphicsPipeline, DescriptorPool, DescriptorSets, UniformBuffers, SwapchainImageCount);
+
+  init::create_command_buffers(Device, CommandPool,
+    {
+      [=](VkCommandBuffer cb, uint32_t index)
+      {
+        VkClearColorValue color = { 0.3f, 0.3f, 0.3f, 1.0f };
+        VkClearValue clearValue = { color };
+
+        VkRenderPassBeginInfo renderPassBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+        renderPassBeginInfo.renderPass = ForwardRenderPass;
+        renderPassBeginInfo.framebuffer = Framebuffers[index];
+        renderPassBeginInfo.renderArea.offset = { 0, 0 };
+        renderPassBeginInfo.renderArea.extent = SwapchainExtent;
+        renderPassBeginInfo.clearValueCount = 1;
+        renderPassBeginInfo.pClearValues = &clearValue;
+
+        vkCmdBeginRenderPass(cb, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        // draw call
+        {
+          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Pipeline);
+
+          VkBuffer vertexBuffers[] = { VertexBuffer.Buffer };
+          VkDeviceSize offsets[] = { 0 };
+          vkCmdBindVertexBuffers(cb, 0, 1, vertexBuffers, offsets);
+          vkCmdBindIndexBuffer(cb, IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
+
+          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Layout, 0, 1, &DescriptorSets[index], 0, nullptr);
+          vkCmdDrawIndexed(cb, (uint32_t) mesh.Indices.size(), 1, 0, 0, 0);
+        }
+
+        vkCmdEndRenderPass(cb);
+      }
+    }, CommandBuffers, SwapchainImageCount
+  );
+    
+  SwapchainDeletion.PushFunction([=]{
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+      vkFreeCommandBuffers(Device.LogicalDevice, CommandPool, 1, &CommandBuffers[i]);
+    }
+  });
 }
 
 void
@@ -334,7 +502,7 @@ stRenderer::Term()
 }
 
 void
-stRenderer::Render()
+stRenderer::Render(double delta)
 {
   vkWaitForFences(Device.LogicalDevice, 1, &InFlightFence[CurrentFrame], VK_TRUE, ~0ull);
 
@@ -350,6 +518,8 @@ stRenderer::Render()
   vkResetFences(Device.LogicalDevice, 1, &InFlightFence[CurrentFrame]);
 
   VkPipelineStageFlags submitStageFlags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+  init::update_uniform_buffer(Device, UniformBuffers, delta, imageIndex, SwapchainExtent);
 
   VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 
