@@ -47,6 +47,24 @@ create_instance(
   return instance;
 }
 
+VkSampleCountFlagBits
+get_max_usable_sample_count(
+  const stDevice& device)
+{
+  VkPhysicalDeviceProperties physicalDeviceProperties;
+  vkGetPhysicalDeviceProperties(device.PhysicalDevice, &physicalDeviceProperties);
+
+  VkSampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+  if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+  if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+  if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+  if (counts & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
+  if (counts & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
+  if (counts & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
+
+  return VK_SAMPLE_COUNT_1_BIT;
+}
+
 VkPhysicalDevice
 pick_device(
   VkPhysicalDevice* devices,
@@ -64,6 +82,52 @@ pick_device(
   }
 
   return physicalDevice;
+}
+
+VkFormat
+find_supported_format(
+  const stDevice& device,
+  const std::vector<VkFormat>& candidates,
+  VkImageTiling tiling,
+  VkFormatFeatureFlags features
+)
+{
+  for (VkFormat format : candidates)
+  {
+    VkFormatProperties props;
+    vkGetPhysicalDeviceFormatProperties(device.PhysicalDevice, format, &props);
+
+    if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features)
+    {
+      return format;
+    }
+    else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features)
+    {
+      return format;
+    }
+  }
+
+  assert(false);
+  return VK_FORMAT_UNDEFINED;
+}
+
+VkFormat
+find_depth_format(
+  const stDevice& device)
+{
+  return find_supported_format(
+    device,
+    { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT },
+    VK_IMAGE_TILING_OPTIMAL,
+    VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+  );
+}
+
+bool
+has_stencil_component(
+  VkFormat format)
+{
+  return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
 stDevice
@@ -164,14 +228,39 @@ choose_swap_surface_format(
   return availableFormats[0];
 }
 
+void
+create_image_view(
+  const stDevice& device,
+  stImage& image,
+  VkFormat format,
+  VkImageAspectFlags aspectFlags,
+  uint32_t mipLevels)
+{
+  VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+  viewInfo.image = image.Src;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewInfo.format = format;
+  viewInfo.subresourceRange.aspectMask = aspectFlags;
+  viewInfo.subresourceRange.baseMipLevel = 0;
+  viewInfo.subresourceRange.levelCount = mipLevels;
+  viewInfo.subresourceRange.baseArrayLayer = 0;
+  viewInfo.subresourceRange.layerCount = 1;
+
+  // viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  // viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  // viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  // viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+  VK_CHECK(vkCreateImageView(device.LogicalDevice, &viewInfo, nullptr, &image.View));
+}
+
 VkSwapchainKHR
 create_swapchain(
   const stDevice& device,
   VkSurfaceKHR surface,
   VkFormat& swapChainImageFormat,
   VkExtent2D& swapChainExtent,
-  VkImage* swapchainImages,
-  VkImageView* swapchainImageViews,
+  stImage* swapchainImages,
   uint32_t& swapchainImageCount,
   VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
   VkPresentModeKHR mode = VK_PRESENT_MODE_MAILBOX_KHR)
@@ -230,25 +319,18 @@ create_swapchain(
     &swapchain)
   );
 
-  VK_CHECK(vkGetSwapchainImagesKHR(device.LogicalDevice, swapchain, &swapchainImageCount, swapchainImages));
+  std::vector<VkImage> images(swapchainImageCount);
+  for (size_t i = 0; i < swapchainImageCount; i++)
+  {
+    images[i] = swapchainImages[i].Src;
+  }
 
-  VkImageViewCreateInfo viewCreateInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-  viewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-  viewCreateInfo.format = swapChainImageFormat;
-  viewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-  viewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-  viewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-  viewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-  viewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  viewCreateInfo.subresourceRange.baseMipLevel = 0;
-  viewCreateInfo.subresourceRange.levelCount = 1;
-  viewCreateInfo.subresourceRange.baseArrayLayer = 0;
-  viewCreateInfo.subresourceRange.layerCount = 1;
+  VK_CHECK(vkGetSwapchainImagesKHR(device.LogicalDevice, swapchain, &swapchainImageCount, images.data()));
 
   for (uint32_t i = 0; i < swapchainImageCount; i++)
   {
-    viewCreateInfo.image = swapchainImages[i];
-    VK_CHECK(vkCreateImageView(device.LogicalDevice, &viewCreateInfo, nullptr, &swapchainImageViews[i]));
+    swapchainImages[i].Src = images[i];
+    create_image_view(device, swapchainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
   }
 
   return swapchain;
@@ -294,49 +376,80 @@ create_command_pool(
 VkRenderPass
 create_render_pass(
   const stDevice& device,
-  VkFormat renderFormat)
+  VkFormat renderFormat,
+  VkSampleCountFlagBits msaaSamples
+)
 {
   VkRenderPass renderPass = VK_NULL_HANDLE;
 
   VkAttachmentDescription color_attachment = {};
 	color_attachment.format = renderFormat;
-	color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+	color_attachment.samples = msaaSamples;
 	color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 	color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;// VK_IMAGE_LAYOUT_UNDEFINED;
-	color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;//VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; //VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;//PRESENT_SRC_KHR;
+	color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+
+  VkAttachmentDescription depth_attachment = {};
+	depth_attachment.format = init::find_depth_format(device);
+	depth_attachment.samples = msaaSamples;
+	depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+  VkAttachmentDescription color_attachment_resolve = {};
+  color_attachment_resolve.format = renderFormat;
+  color_attachment_resolve.samples = VK_SAMPLE_COUNT_1_BIT;
+  color_attachment_resolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  color_attachment_resolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  color_attachment_resolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  color_attachment_resolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  color_attachment_resolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  color_attachment_resolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
 	VkAttachmentReference color_attachment_ref = {};
 	color_attachment_ref.attachment = 0;
 	color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+  VkAttachmentReference depth_attachment_ref = {};
+	depth_attachment_ref.attachment = 1;
+	depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+  VkAttachmentReference color_attachment_resolve_ref = {};
+  color_attachment_resolve_ref.attachment = 2;
+  color_attachment_resolve_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
   VkSubpassDescription subpass = {};
 	subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 	subpass.colorAttachmentCount = 1;
 	subpass.pColorAttachments = &color_attachment_ref;
-	// subpass.pDepthStencilAttachment = &depth_attachment_ref;
+	subpass.pDepthStencilAttachment = &depth_attachment_ref;
+  subpass.pResolveAttachments = &color_attachment_resolve_ref;
 
 	//1 dependency, which is from "outside" into the subpass. And we can read or write color
-	//VkSubpassDependency dependency = {};
-	//dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-	//dependency.dstSubpass = 0;
-	//dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	//dependency.srcAccessMask = 0;
-	//dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-	//dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	VkSubpassDependency dependency = {};
+	dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+	dependency.dstSubpass = 0;
+	dependency.srcAccessMask = 0;
+  dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
   //array of 2 attachments, one for the color, and other for depth
-	VkAttachmentDescription attachments[1] = { color_attachment };
+	VkAttachmentDescription attachments[3] = { color_attachment, depth_attachment, color_attachment_resolve };
 
 	VkRenderPassCreateInfo render_pass_info = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
 	render_pass_info.attachmentCount = ArrayCount(attachments);
 	render_pass_info.pAttachments = attachments;
 	render_pass_info.subpassCount = 1;
 	render_pass_info.pSubpasses = &subpass;
-	//render_pass_info.dependencyCount = 1;
-	//render_pass_info.pDependencies = &dependency;
+	render_pass_info.dependencyCount = 1;
+	render_pass_info.pDependencies = &dependency;
 
 	VK_CHECK(vkCreateRenderPass(device.LogicalDevice, &render_pass_info, nullptr, &renderPass));
 
@@ -348,17 +461,26 @@ create_framebuffer(
   const stDevice& device,
   VkRenderPass renderPass,
   VkExtent2D bufferSize,
-  VkImageView atachment
+  VkImageView swapChainImageView,
+  VkImageView depthImageView,
+  VkImageView colorImageView
   )
 {
   VkFramebuffer framebuffer = VK_NULL_HANDLE;
+
+  VkImageView attachments[3] = 
+  {
+    colorImageView,
+    depthImageView,
+    swapChainImageView
+  };
 
   VkFramebufferCreateInfo createInfo = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
   createInfo.renderPass = renderPass;
   createInfo.width = bufferSize.width;
   createInfo.height = bufferSize.height;
-  createInfo.attachmentCount = 1;
-  createInfo.pAttachments = &atachment;
+  createInfo.attachmentCount = ArrayCount(attachments);
+  createInfo.pAttachments = attachments;
   createInfo.layers = 1;
 
   VK_CHECK(vkCreateFramebuffer(device.LogicalDevice, &createInfo, nullptr, &framebuffer));
@@ -447,7 +569,8 @@ stPipeline
 create_pipeline(
   const stDevice& device,
   VkExtent2D windowExtend,
-  VkRenderPass renderPass)
+  VkRenderPass renderPass,
+  VkSampleCountFlagBits msaaSamples)
 {
   stPipeline pipeline = {};
 
@@ -510,9 +633,9 @@ create_pipeline(
   rasterizer.depthBiasSlopeFactor = 0.0f;
 
   VkPipelineMultisampleStateCreateInfo multisampling = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
-  multisampling.sampleShadingEnable = VK_FALSE;
-  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-  multisampling.minSampleShading = 1.0f;
+  multisampling.sampleShadingEnable = VK_TRUE;
+  multisampling.rasterizationSamples = msaaSamples;
+  multisampling.minSampleShading = .2f;
   multisampling.pSampleMask = nullptr;
   multisampling.alphaToCoverageEnable = VK_FALSE;
   multisampling.alphaToOneEnable = VK_FALSE;
@@ -558,6 +681,7 @@ create_pipeline(
   dynamicState.dynamicStateCount = ArrayCount(dynamicStates);
   dynamicState.pDynamicStates = dynamicStates;
 
+  // ubo
   VkDescriptorSetLayoutBinding uboLayoutBinding = {};
   uboLayoutBinding.binding = 0;
   uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -565,9 +689,18 @@ create_pipeline(
   uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
   uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 
+  // sampler
+  VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
+  samplerLayoutBinding.binding = 1;
+  samplerLayoutBinding.descriptorCount = 1;
+  samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  samplerLayoutBinding.pImmutableSamplers = nullptr;
+  samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  
+  std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
   VkDescriptorSetLayoutCreateInfo layoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-  layoutInfo.bindingCount = 1;
-  layoutInfo.pBindings = &uboLayoutBinding;
+  layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+  layoutInfo.pBindings = bindings.data();
 
   VK_CHECK(vkCreateDescriptorSetLayout(device.LogicalDevice, &layoutInfo, nullptr, &pipeline.DescriptorSet));
 
@@ -579,6 +712,18 @@ create_pipeline(
 
   VK_CHECK(vkCreatePipelineLayout(device.LogicalDevice, &pipelineLayoutInfo, nullptr, &pipeline.Layout));
 
+  VkPipelineDepthStencilStateCreateInfo depthStencil{};
+  depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  depthStencil.depthTestEnable = VK_TRUE;
+  depthStencil.depthWriteEnable = VK_TRUE;
+  depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+  depthStencil.depthBoundsTestEnable = VK_FALSE;
+  depthStencil.minDepthBounds = 0.0f; // Optional
+  depthStencil.maxDepthBounds = 1.0f; // Optional
+  depthStencil.stencilTestEnable = VK_FALSE;
+  depthStencil.front = {}; // Optional
+  depthStencil.back = {}; // Optional
+
   VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
   pipelineInfo.stageCount = ArrayCount(shaderStages);
   pipelineInfo.pStages = shaderStages;
@@ -587,7 +732,7 @@ create_pipeline(
   pipelineInfo.pViewportState = &viewportState;
   pipelineInfo.pRasterizationState = &rasterizer;
   pipelineInfo.pMultisampleState = &multisampling;
-  pipelineInfo.pDepthStencilState = nullptr;
+  pipelineInfo.pDepthStencilState = &depthStencil;
   pipelineInfo.pColorBlendState = &colorBlending;
   pipelineInfo.pDynamicState = nullptr;
   pipelineInfo.layout = pipeline.Layout;
@@ -815,8 +960,8 @@ update_uniform_buffer(
   time += (float) delta * 0.000000001f; // from ns to s
 
   stUniformBufferObject ubo = {};
-  ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-  ubo.View = glm::lookAt(glm::vec3(2.0f, 0.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+  ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+  ubo.View = glm::lookAt(glm::vec3(0.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
   ubo.Proj = glm::perspective(glm::radians(75.0f), windowSize.width / (float) windowSize.height, 0.1f, 10.0f);
   ubo.Proj[1][1] *= -1;
 
@@ -827,18 +972,17 @@ update_uniform_buffer(
 }
 
 VkDescriptorPool
-create_descriptor_pool(
+create_descriptor_pools(
   const stDevice& device,
-  uint32_t descriptorCount
+  VkDescriptorPoolSize* poolSizes, 
+  uint32_t poolCount,
+  uint32_t swapchainImageCount
 )
 {
-  VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER };
-  poolSize.descriptorCount = descriptorCount;
-
   VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-  poolInfo.poolSizeCount = 1;
-  poolInfo.pPoolSizes = &poolSize;
-  poolInfo.maxSets = descriptorCount;
+  poolInfo.poolSizeCount = poolCount;
+  poolInfo.pPoolSizes = poolSizes;
+  poolInfo.maxSets = swapchainImageCount;
 
   VkDescriptorPool descriptorPool;
 
@@ -854,39 +998,51 @@ create_descriptor_sets(
   VkDescriptorPool descriptorPool,
   VkDescriptorSet* descriptorSets,
   stBuffer* uniformBuffers,
-  uint32_t count)
+  uint32_t swapChainImageCount,
+  const stTexture& texture
+  )
 {
-  std::vector<VkDescriptorSetLayout> layouts(count, pipeline.DescriptorSet);
+  std::vector<VkDescriptorSetLayout> layouts(swapChainImageCount, pipeline.DescriptorSet);
 
   VkDescriptorSetAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   allocInfo.descriptorPool = descriptorPool;
-  allocInfo.descriptorSetCount = count;
+  allocInfo.descriptorSetCount = swapChainImageCount;
   allocInfo.pSetLayouts = layouts.data();
 
   vkAllocateDescriptorSets(device.LogicalDevice, &allocInfo, descriptorSets);
 
-  for (size_t i = 0; i < count; i++)
+  for (size_t i = 0; i < swapChainImageCount; i++)
   {
     VkDescriptorBufferInfo bufferInfo{};
     bufferInfo.buffer = uniformBuffers[i].Buffer;
     bufferInfo.offset = 0;
     bufferInfo.range = sizeof(stUniformBufferObject);
 
-    VkWriteDescriptorSet descriptorWrite{};
-    descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrite.dstSet = descriptorSets[i];
-    descriptorWrite.dstBinding = 0;
-    descriptorWrite.dstArrayElement = 0;
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = texture.Image.View;
+    imageInfo.sampler = texture.Sampler;
 
-    descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrite.descriptorCount = 1;
+    std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
 
-    descriptorWrite.pBufferInfo = &bufferInfo;
-    descriptorWrite.pImageInfo = nullptr; // Optional
-    descriptorWrite.pTexelBufferView = nullptr; // Optional
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSets[i];
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pBufferInfo = &bufferInfo;
+    
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSets[i];
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pImageInfo = &imageInfo;
 
-    vkUpdateDescriptorSets(device.LogicalDevice, 1, &descriptorWrite, 0, nullptr);
+    vkUpdateDescriptorSets(device.LogicalDevice, (uint32_t)descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
   }
 }
 
@@ -895,6 +1051,8 @@ create_image(
   const stDevice& device,
   uint32_t width,
   uint32_t height,
+  uint32_t mipLevels,
+  VkSampleCountFlagBits numSample,
   VkFormat format,
   VkImageTiling tiling,
   VkImageUsageFlags usage,
@@ -907,29 +1065,29 @@ create_image(
   imageInfo.extent.width = static_cast<uint32_t>(width);
   imageInfo.extent.height = static_cast<uint32_t>(height);
   imageInfo.extent.depth = 1;
-  imageInfo.mipLevels = 1;
+  imageInfo.mipLevels = mipLevels;
   imageInfo.arrayLayers = 1;
-  imageInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
-  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.format = format;
+  imageInfo.tiling = tiling;
   imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+  imageInfo.usage = usage;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.samples = numSample;
   imageInfo.flags = 0; // Optional
   
-  VK_CHECK(vkCreateImage(device.LogicalDevice, &imageInfo, nullptr, &image.Image));
+  VK_CHECK(vkCreateImage(device.LogicalDevice, &imageInfo, nullptr, &image.Src));
 
   VkMemoryRequirements memRequirements;
-  vkGetImageMemoryRequirements(device.LogicalDevice, image.Image, &memRequirements);
+  vkGetImageMemoryRequirements(device.LogicalDevice, image.Src, &memRequirements);
   
   VkMemoryAllocateInfo allocInfo{};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = find_memory_type(device, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  allocInfo.memoryTypeIndex = find_memory_type(device, memRequirements.memoryTypeBits, properties);
   
   VK_CHECK(vkAllocateMemory(device.LogicalDevice, &allocInfo, nullptr, &image.Memory));
   
-  vkBindImageMemory(device.LogicalDevice, image.Image, image.Memory, 0);
+  vkBindImageMemory(device.LogicalDevice, image.Src, image.Memory, 0);
 
   return image;
 }
@@ -941,7 +1099,8 @@ transition_image_layout(
   VkImage image,
   VkFormat format,
   VkImageLayout oldLayout,
-  VkImageLayout newLayout
+  VkImageLayout newLayout,
+  uint32_t mipLevels
 )
 {
   VkCommandBuffer commandBuffer = begin_single_time_commands(device, commandPool);
@@ -955,39 +1114,65 @@ transition_image_layout(
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
   barrier.image = image;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+  if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+  {
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    if (has_stencil_component(format))
+    {
+      barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
+  }
+  else
+  {
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  }
+
   barrier.subresourceRange.baseMipLevel = 0;
-  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.levelCount = mipLevels;
   barrier.subresourceRange.baseArrayLayer = 0;
   barrier.subresourceRange.layerCount = 1;
 
   VkPipelineStageFlags sourceStage;
-  VkPipelineStageFlags destinationStage;
+  VkPipelineStageFlags destinationStage;  
   
   if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
   {
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  
+
     sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-  } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+  {
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  
+
     sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  } else {
-      assert(false);
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+  {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  }
+  else
+  {
+    assert(false);
   }
   
   vkCmdPipelineBarrier(
-      commandBuffer,
-      sourceStage, destinationStage,
-      0,
-      0, nullptr,
-      0, nullptr,
-      1, &barrier
+    commandBuffer,
+    sourceStage, destinationStage,
+    0,
+    0, nullptr,
+    0, nullptr,
+    1, &barrier
   );
 
   end_single_time_command(device, commandPool, commandBuffer);
@@ -1016,9 +1201,9 @@ copy_buffer_to_image(
   
   region.imageOffset = {0, 0, 0};
   region.imageExtent = {
-      width,
-      height,
-      1
+    width,
+    height,
+    1
   };
 
   vkCmdCopyBufferToImage(
@@ -1033,14 +1218,118 @@ copy_buffer_to_image(
   end_single_time_command(device, commandPool, commandBuffer);
 }
 
-stImage
-create_texture_image(
+void
+generate_mipmaps(
   const stDevice& device,
-  VkCommandPool commandPool
+  VkCommandPool commandPool,
+  VkImage image,
+  VkFormat imageFormat,
+  int32_t texWidth,
+  int32_t texHeight,
+  uint32_t mipLevels
 )
 {
+  VkFormatProperties formatProperties;
+  vkGetPhysicalDeviceFormatProperties(device.PhysicalDevice, imageFormat, &formatProperties);
+
+  if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+  {
+    assert(false);
+  }
+
+  VkCommandBuffer commandBuffer = begin_single_time_commands(device, commandPool);
+
+  VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+  barrier.image = image;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.subresourceRange.levelCount = 1;
+
+  int32_t mipWidth = texWidth;
+  int32_t mipHeight = texHeight;
+  
+  for (uint32_t i = 1; i < mipLevels; i++)
+  {
+    barrier.subresourceRange.baseMipLevel = i - 1;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+      0, nullptr,
+      0, nullptr,
+      1, &barrier
+    );
+
+    VkImageBlit blit = {};
+    blit.srcOffsets[0] = { 0, 0, 0 };
+    blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+    blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.srcSubresource.mipLevel = i - 1;
+    blit.srcSubresource.baseArrayLayer = 0;
+    blit.srcSubresource.layerCount = 1;
+    blit.dstOffsets[0] = { 0, 0, 0 };
+    blit.dstOffsets[1] = { mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1 };
+    blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blit.dstSubresource.mipLevel = i;
+    blit.dstSubresource.baseArrayLayer = 0;
+    blit.dstSubresource.layerCount = 1;
+
+    vkCmdBlitImage(commandBuffer,
+      image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      1, &blit,
+      VK_FILTER_LINEAR
+    );
+
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    
+    vkCmdPipelineBarrier(commandBuffer,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+      0, nullptr,
+      0, nullptr,
+      1, &barrier
+    );
+
+    if (mipWidth > 1) mipWidth /= 2;
+    if (mipHeight > 1) mipHeight /= 2;
+  }
+
+  barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+  barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(commandBuffer,
+    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+    0, nullptr,
+    0, nullptr,
+    1, &barrier
+  );
+
+  end_single_time_command(device, commandPool, commandBuffer);
+}
+
+stTexture
+create_texture_image(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  const char* path
+)
+{
+  stTexture texture = {};
   int texWidth, texHeight, texChannels;
-  stbi_uc* pixels = stbi_load("./data/models/cube/default.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+  stbi_uc* pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+  texture.MipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
   VkDeviceSize imageSize = texWidth * texHeight * 4;
   assert(pixels);
 
@@ -1061,27 +1350,184 @@ create_texture_image(
 
   stbi_image_free(pixels);
 
-  stImage image = create_image(
+  texture.Image = create_image(
     device,
     texWidth,
     texHeight,
+    texture.MipLevels,
+    VK_SAMPLE_COUNT_1_BIT,
     VK_FORMAT_R8G8B8A8_SRGB,
     VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
     VK_IMAGE_USAGE_TRANSFER_DST_BIT |
     VK_IMAGE_USAGE_SAMPLED_BIT,
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   );
 
-  transition_image_layout(device, commandPool, image.Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  transition_image_layout(
+    device,
+    commandPool,
+    texture.Image.Src,
+    VK_FORMAT_R8G8B8A8_SRGB,
+    VK_IMAGE_LAYOUT_UNDEFINED,
+    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    texture.MipLevels
+  );
 
-  copy_buffer_to_image(device, commandPool, staging.Buffer, image.Image, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+  copy_buffer_to_image(
+    device,
+    commandPool,
+    staging.Buffer,
+    texture.Image.Src,
+    static_cast<uint32_t>(texWidth),
+    static_cast<uint32_t>(texHeight)
+  );
 
-  transition_image_layout(device, commandPool, image.Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  //transition_image_layout(
+  //  device,
+  //  commandPool,
+  //  texture.Image.Src,
+  //  VK_FORMAT_R8G8B8A8_SRGB,
+  //  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+  //  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+  //  1
+  //);
+
+  generate_mipmaps(device, commandPool, texture.Image.Src, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, texture.MipLevels);
 
   vkDestroyBuffer(device.LogicalDevice, staging.Buffer, nullptr);
   vkFreeMemory(device.LogicalDevice, staging.Memory, nullptr);
 
-  return image;
+  return texture;
+}
+
+void
+create_texture_image_view(
+  const stDevice& device,
+  stTexture& texture)
+{
+  create_image_view(device, texture.Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, texture.MipLevels);
+}
+
+VkSampler
+create_texture_sampler(
+  const stDevice& device,
+  uint32_t mipLevels)
+{
+  VkSamplerCreateInfo samplerInfo{};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = VK_FILTER_LINEAR;
+  samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+  VkPhysicalDeviceProperties properties = {};
+  vkGetPhysicalDeviceProperties(device.PhysicalDevice, &properties);
+  samplerInfo.anisotropyEnable = VK_TRUE;
+  samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = 0.0f;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = (float) mipLevels;
+
+  VkSampler textureSampler;
+  VK_CHECK(vkCreateSampler(device.LogicalDevice, &samplerInfo, nullptr, &textureSampler));
+  return textureSampler;
+}
+
+stTexture
+create_texture(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  const char* path,
+  stDeletionQueue* deletionQueue)
+{
+  stTexture texture = create_texture_image(device, commandPool, path);
+
+  create_texture_image_view(device, texture);
+
+  texture.Sampler = create_texture_sampler(device, texture.MipLevels);
+
+  if (deletionQueue)
+  {
+    deletionQueue->PushFunction([=]{
+      vkDestroySampler(device.LogicalDevice, texture.Sampler, nullptr);
+      vkDestroyImageView(device.LogicalDevice, texture.Image.View, nullptr);
+      vkDestroyImage(device.LogicalDevice, texture.Image.Src, nullptr);
+      vkFreeMemory(device.LogicalDevice, texture.Image.Memory, nullptr);
+    });
+  }
+
+  return texture;
+}
+
+stImage
+create_depth_resources(
+  const stDevice& device,
+  VkSampleCountFlagBits msaaSamples,
+  VkExtent2D swapChainExtent,
+  VkCommandPool commandPool)
+{
+  VkFormat depthFormat = find_depth_format(device);
+
+  stImage depthImage = create_image(
+    device,
+    swapChainExtent.width,
+    swapChainExtent.height,
+    1,
+    msaaSamples,
+    depthFormat,
+    VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  );
+
+  create_image_view(device, depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+
+  transition_image_layout(
+    device,
+    commandPool,
+    depthImage.Src,
+    depthFormat,
+    VK_IMAGE_LAYOUT_UNDEFINED,
+    VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    1
+  );
+
+  return depthImage;
+}
+
+stImage
+create_color_resources(
+  const stDevice& device,
+  VkExtent2D swapChainExtent,
+  VkFormat swapchainImageFormat,
+  VkSampleCountFlagBits msaaSamples,
+  VkCommandPool commandPool)
+{
+  stImage colorImage = create_image(
+    device,
+    swapChainExtent.width,
+    swapChainExtent.height,
+    1,
+    msaaSamples,
+    swapchainImageFormat,
+    VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+  );
+
+  create_image_view(device, colorImage, swapchainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+  return colorImage;
 }
 
 }

@@ -4,26 +4,6 @@ workspace "simple-game-engine"
     configurations { "Debug" }
     platforms { "Win64" }
 
-project "engine"
-    kind "ConsoleApp"
-    
-    language "C++"
-    cppdialect "C++17"
-
-    targetdir ".bin/%{cfg.buildcfg}"
-    objdir ".obj/%{cfg.buildcfg}"
-
-    files { "./src/**.h", "./src/**.cpp", "./ext/meshoptimizer/src/**.cpp"}
-
-    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/", "./ext/volk/", "./ext/meshoptimizer/src/", "./ext/meshoptimizer/extern/", "./ext/stb/" }
-
-    filter "configurations:Debug"
-        symbols "On"
-
-    filter {"system:windows", "action:vs*"}
-        systemversion("latest")
-        buildoptions {"-bigobj"}
-
 project "resources"
     kind "Utility"
 
@@ -43,3 +23,25 @@ project "resources"
 
     filter {"system:windows", "action:vs*"}
         systemversion("latest")
+
+project "engine"
+    kind "ConsoleApp"
+    
+    language "C++"
+    cppdialect "C++17"
+
+    targetdir ".bin/%{cfg.buildcfg}"
+    objdir ".obj/%{cfg.buildcfg}"
+
+    files { "./src/**.h", "./src/**.cpp", "./ext/meshoptimizer/src/**.cpp"}
+
+    links { "resources" }
+
+    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/", "./ext/volk/", "./ext/meshoptimizer/src/", "./ext/meshoptimizer/extern/", "./ext/stb/" }
+
+    filter "configurations:Debug"
+        symbols "On"
+
+    filter {"system:windows", "action:vs*"}
+        systemversion("latest")
+        buildoptions {"-bigobj"}

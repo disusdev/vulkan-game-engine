@@ -103,8 +103,17 @@ stBuffer
 struct
 stImage
 {
-  VkImage Image = VK_NULL_HANDLE;
+  VkImage Src = VK_NULL_HANDLE;
+  VkImageView View = VK_NULL_HANDLE;
   VkDeviceMemory Memory = VK_NULL_HANDLE;
+};
+
+struct
+stTexture
+{
+  stImage Image = {};
+  VkSampler Sampler = VK_NULL_HANDLE;
+  uint32_t MipLevels;
 };
 
 struct
@@ -124,8 +133,6 @@ VkExtent2D
 ChooseSwapExtent(
   const VkSurfaceCapabilitiesKHR& capabilities
 );
-
-#include "vulkan_initializers.h"
 
 struct
 stDeletionQueue
@@ -147,6 +154,8 @@ stDeletionQueue
     Deletors.clear();
   }
 };
+
+#include "vulkan_initializers.h"
 
 #define MAX_PHYSICAL_DEVICE_COUNT 16
 #define MAX_SWAPCHAIN_IMAGE_COUNT 16
@@ -194,10 +203,13 @@ stRenderer
   VkDescriptorPool DescriptorPool = VK_NULL_HANDLE;
   VkDescriptorSet DescriptorSets[MAX_SWAPCHAIN_IMAGE_COUNT];
 
-  stImage TexImage = {};
+  stTexture TexImage = {};
 
-  VkImage SwapchainImages[MAX_SWAPCHAIN_IMAGE_COUNT];
-  VkImageView SwapchainImageViews[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkSampleCountFlagBits SamplesFlag = VK_SAMPLE_COUNT_1_BIT;
+
+  stImage SwapchainImages[MAX_SWAPCHAIN_IMAGE_COUNT];
+  stImage DepthImage = {};
+  stImage ColorImage = {};
   VkFramebuffer Framebuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
   uint32_t SwapchainImageCount = ArrayCount(SwapchainImages);
 
@@ -243,6 +255,8 @@ stRenderer::Init(
   Device.PhysicalDevice = init::pick_device(PhysicalDevices, PhysicalDeviceCount);
   assert(Device.PhysicalDevice != VK_NULL_HANDLE);
 
+  SamplesFlag = init::get_max_usable_sample_count(Device);
+
   Device = init::create_device(Device.PhysicalDevice, Surface);
 
   Deletion.PushFunction([=]{
@@ -268,12 +282,7 @@ stRenderer::Init(
     vkDestroyCommandPool(Device.LogicalDevice, CommandPool, nullptr);
   });
 
-  TexImage = init::create_texture_image(Device, CommandPool);
-
-  Deletion.PushFunction([=]{
-    vkDestroyImage(Device.LogicalDevice, TexImage.Image, nullptr);
-    vkFreeMemory(Device.LogicalDevice, TexImage.Memory, nullptr);
-  });
+  TexImage = init::create_texture(Device, CommandPool, "./data/models/cube/default.png", &Deletion);
 
   CreateSwapchain();
 }
@@ -287,7 +296,6 @@ stRenderer::CreateSwapchain()
     SwapchainImageFormat,
     SwapchainExtent,
     SwapchainImages,
-    SwapchainImageViews,
     SwapchainImageCount
   );
 
@@ -295,23 +303,36 @@ stRenderer::CreateSwapchain()
     vkDestroySwapchainKHR(Device.LogicalDevice, Swapchain, nullptr);
   });
 
-  ForwardRenderPass = init::create_render_pass(Device, SwapchainImageFormat);
+  ForwardRenderPass = init::create_render_pass(Device, SwapchainImageFormat, SamplesFlag);
 
   SwapchainDeletion.PushFunction([=]{
     vkDestroyRenderPass(Device.LogicalDevice, ForwardRenderPass, nullptr);
   });
 
+  ColorImage = init::create_color_resources(Device, SwapchainExtent, SwapchainImageFormat, SamplesFlag, CommandPool);
+  DepthImage = init::create_depth_resources(Device, SamplesFlag, SwapchainExtent, CommandPool);
+
   for (size_t i = 0; i < SwapchainImageCount; i++)
   {
-    Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImageViews[i]);
+    Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImages[i].View, DepthImage.View, ColorImage.View);
 
     SwapchainDeletion.PushFunction([=]{
       vkDestroyFramebuffer(Device.LogicalDevice, Framebuffers[i], nullptr);
-      vkDestroyImageView(Device.LogicalDevice, SwapchainImageViews[i], nullptr);
+      vkDestroyImageView(Device.LogicalDevice, SwapchainImages[i].View, nullptr);
     });
   }
 
-  GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass);
+  SwapchainDeletion.PushFunction([=]{
+    vkDestroyImageView(Device.LogicalDevice, DepthImage.View, nullptr);
+    vkDestroyImage(Device.LogicalDevice, DepthImage.Src, nullptr);
+    vkFreeMemory(Device.LogicalDevice, DepthImage.Memory, nullptr);
+
+    vkDestroyImageView(Device.LogicalDevice, ColorImage.View, nullptr);
+    vkDestroyImage(Device.LogicalDevice, ColorImage.Src, nullptr);
+    vkFreeMemory(Device.LogicalDevice, ColorImage.Memory, nullptr);
+  });
+
+  GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag);
 
   SwapchainDeletion.PushFunction([=]{
     vkDestroyDescriptorSetLayout(Device.LogicalDevice, GraphicsPipeline.DescriptorSet, nullptr);
@@ -321,19 +342,7 @@ stRenderer::CreateSwapchain()
 
   stMesh mesh;
 
-  //mesh.Vertices.push_back({{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}});
-  //mesh.Vertices.push_back({{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}});
-  //mesh.Vertices.push_back({{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}});
-  //mesh.Vertices.push_back({{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}});
-
-  //mesh.Indices.resize(6);
-  //mesh.Indices[0] = 0;
-  //mesh.Indices[1] = 1;
-  //mesh.Indices[2] = 2;
-  //mesh.Indices[3] = 2;
-  //mesh.Indices[4] = 3;
-  //mesh.Indices[5] = 0;
-
+  // init::load_mesh(mesh, "./data/models/pirate/pirate.obj");
   init::load_mesh(mesh, "./data/models/cube/cube.obj");
   // init::load_mesh(mesh, "./data/models/bunny/bunny.obj");
 
@@ -428,28 +437,37 @@ stRenderer::CreateSwapchain()
     }
   });
 
-  DescriptorPool = init::create_descriptor_pool(Device, SwapchainImageCount);
+  std::array<VkDescriptorPoolSize, 2> poolSizes = {};
+  poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  poolSizes[0].descriptorCount = SwapchainImageCount;
+  poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSizes[1].descriptorCount = SwapchainImageCount;
+
+  DescriptorPool = init::create_descriptor_pools(Device, poolSizes.data(), (uint32_t)poolSizes.size(), SwapchainImageCount);
 
   SwapchainDeletion.PushFunction([=]{
     vkDestroyDescriptorPool(Device.LogicalDevice, DescriptorPool, nullptr);
   });
 
-  init::create_descriptor_sets(Device, GraphicsPipeline, DescriptorPool, DescriptorSets, UniformBuffers, SwapchainImageCount);
+  init::create_descriptor_sets(Device, GraphicsPipeline, DescriptorPool, DescriptorSets, UniformBuffers, SwapchainImageCount, TexImage);
 
   init::create_command_buffers(Device, CommandPool,
     {
       [=](VkCommandBuffer cb, uint32_t index)
       {
-        VkClearColorValue color = { 0.3f, 0.3f, 0.3f, 1.0f };
-        VkClearValue clearValue = { color };
+        VkClearValue clearValues[2] =
+        {
+          {{ 0.3f, 0.3f, 0.3f, 1.0f }},
+          { 1.0f, 0 }
+        };
 
         VkRenderPassBeginInfo renderPassBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
         renderPassBeginInfo.renderPass = ForwardRenderPass;
         renderPassBeginInfo.framebuffer = Framebuffers[index];
         renderPassBeginInfo.renderArea.offset = { 0, 0 };
         renderPassBeginInfo.renderArea.extent = SwapchainExtent;
-        renderPassBeginInfo.clearValueCount = 1;
-        renderPassBeginInfo.pClearValues = &clearValue;
+        renderPassBeginInfo.clearValueCount = ArrayCount(clearValues);
+        renderPassBeginInfo.pClearValues = clearValues;
 
         vkCmdBeginRenderPass(cb, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 

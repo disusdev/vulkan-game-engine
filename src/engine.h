@@ -60,6 +60,8 @@ engine
 
     Renderer.Term();
 
+    // system("pause");
+
     return 0;
   }
 
