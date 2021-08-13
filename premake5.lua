@@ -37,7 +37,7 @@ project "engine"
 
     links { "resources" }
 
-    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/", "./ext/volk/", "./ext/meshoptimizer/src/", "./ext/meshoptimizer/extern/", "./ext/stb/" }
+    includedirs { "$(VULKAN_SDK)/include", "./ext/glm/", "./ext/volk/", "./ext/meshoptimizer/src/", "./ext/meshoptimizer/extern/", "./ext/stb/", "./ext/SPIRV-Reflect/" }
 
     filter "configurations:Debug"
         symbols "On"

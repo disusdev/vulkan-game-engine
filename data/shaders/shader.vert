@@ -8,6 +8,13 @@ layout(binding = 0) uniform UniformBufferObject
   mat4 proj;
 } ubo;
 
+//push constants block
+layout( push_constant ) uniform constants
+{
+	vec4 data;
+	mat4 render_matrix;
+} PushConstants;
+
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;

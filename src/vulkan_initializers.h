@@ -9,7 +9,8 @@ create_instance(
   const char* appName = "default_app",
   uint32_t appVersion = VK_MAKE_VERSION(0, 0, 1),
   const char* engineName = "default_engine",
-  uint32_t engineVersion = VK_MAKE_VERSION(0, 0, 1) )
+  uint32_t engineVersion = VK_MAKE_VERSION(0, 0, 1),
+  stDeletionQueue* deleteionQueue = nullptr)
 {
   VkInstance instance = VK_NULL_HANDLE;
 
@@ -43,6 +44,11 @@ create_instance(
   inst_info.ppEnabledExtensionNames = extentions;
 
   VK_CHECK(vkCreateInstance(&inst_info, nullptr, &instance));
+
+  if(deleteionQueue)
+  deleteionQueue->PushFunction([=]{
+    vkDestroyInstance(instance, nullptr);
+  });
 
   return instance;
 }
@@ -133,7 +139,8 @@ has_stencil_component(
 stDevice
 create_device(
   VkPhysicalDevice physicalDevice,
-  VkSurfaceKHR surface
+  VkSurfaceKHR surface,
+  stDeletionQueue* deletionQueue
 )
 {
   stDevice device = {};
@@ -208,6 +215,11 @@ create_device(
     0, &device.Queues[QUEUE_TYPE_GRAPHICS].Queue
   );
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyDevice(device.LogicalDevice, nullptr);
+  });
+
   return device;
 }
 
@@ -263,7 +275,8 @@ create_swapchain(
   stImage* swapchainImages,
   uint32_t& swapchainImageCount,
   VkImageUsageFlags imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-  VkPresentModeKHR mode = VK_PRESENT_MODE_MAILBOX_KHR)
+  VkPresentModeKHR mode = VK_PRESENT_MODE_MAILBOX_KHR,
+  stDeletionQueue* deleteionQueue = nullptr)
 {
   VkSwapchainKHR swapchain = VK_NULL_HANDLE;
 
@@ -333,12 +346,18 @@ create_swapchain(
     create_image_view(device, swapchainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
   }
 
+  if (deleteionQueue)
+  deleteionQueue->PushFunction([=]{
+    vkDestroySwapchainKHR(device.LogicalDevice, swapchain, nullptr);
+  });
+
   return swapchain;
 }
 
 VkSemaphore
 create_semaphore(
-  const stDevice& device)
+  const stDevice& device,
+  stDeletionQueue* deletionQueue)
 {
   VkSemaphore semaphore = VK_NULL_HANDLE;
 
@@ -354,13 +373,19 @@ create_semaphore(
     &semaphore)
   );
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroySemaphore(device.LogicalDevice, semaphore, nullptr);
+  });
+
   return semaphore;
 }
 
 VkCommandPool
 create_command_pool(
   const stDevice& device,
-  VkCommandPoolCreateFlags flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT)
+  VkCommandPoolCreateFlags flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+  stDeletionQueue* deletionQueue = nullptr)
 {
   VkCommandPool pool;
 
@@ -370,6 +395,11 @@ create_command_pool(
 
   VK_CHECK(vkCreateCommandPool(device.LogicalDevice, &createInfo, nullptr, &pool));
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyCommandPool(device.LogicalDevice, pool, nullptr);
+  });
+
   return pool;
 }
 
@@ -377,7 +407,8 @@ VkRenderPass
 create_render_pass(
   const stDevice& device,
   VkFormat renderFormat,
-  VkSampleCountFlagBits msaaSamples
+  VkSampleCountFlagBits msaaSamples,
+  stDeletionQueue* deletionQueue
 )
 {
   VkRenderPass renderPass = VK_NULL_HANDLE;
@@ -453,6 +484,11 @@ create_render_pass(
 
 	VK_CHECK(vkCreateRenderPass(device.LogicalDevice, &render_pass_info, nullptr, &renderPass));
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyRenderPass(device.LogicalDevice, renderPass, nullptr);
+  });
+
   return renderPass;
 }
 
@@ -463,7 +499,8 @@ create_framebuffer(
   VkExtent2D bufferSize,
   VkImageView swapChainImageView,
   VkImageView depthImageView,
-  VkImageView colorImageView
+  VkImageView colorImageView,
+  stDeletionQueue* deletionQueue
   )
 {
   VkFramebuffer framebuffer = VK_NULL_HANDLE;
@@ -485,12 +522,19 @@ create_framebuffer(
 
   VK_CHECK(vkCreateFramebuffer(device.LogicalDevice, &createInfo, nullptr, &framebuffer));
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyFramebuffer(device.LogicalDevice, framebuffer, nullptr);
+    vkDestroyImageView(device.LogicalDevice, swapChainImageView, nullptr);
+  });
+
   return framebuffer;
 }
 
 VkFence
 create_fence(
-  const stDevice& device)
+  const stDevice& device,
+  stDeletionQueue* deletionQueue)
 {
   VkFence fence = VK_NULL_HANDLE;
 
@@ -498,6 +542,11 @@ create_fence(
   createInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
   VK_CHECK(vkCreateFence(device.LogicalDevice, &createInfo, nullptr, &fence));
+
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyFence(device.LogicalDevice, fence, nullptr);
+  });
 
   return fence;
 }
@@ -510,7 +559,8 @@ create_command_buffers(
   VkCommandBuffer* commandBuffers = nullptr,
   uint32_t count = 0,
   VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-  VkCommandBufferUsageFlags flags = 0)
+  VkCommandBufferUsageFlags flags = 0,
+  stDeletionQueue* deletionQueue = nullptr)
 {
   VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
   allocInfo.commandPool = commandPool;
@@ -533,6 +583,11 @@ create_command_buffers(
     }
 
     VK_CHECK(vkEndCommandBuffer(commandBuffers[i]));
+
+    if (deletionQueue)
+    deletionQueue->PushFunction([=]{
+      vkFreeCommandBuffers(device.LogicalDevice, commandPool, 1, &commandBuffers[i]);
+    });
   }
 }
 
@@ -565,12 +620,142 @@ load_shader_module(
   return shaderModule;
 }
 
+VkPipelineVertexInputStateCreateInfo
+vertex_input_state_create_info()
+{
+  VkPipelineVertexInputStateCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+  info.pNext = nullptr;
+  info.vertexBindingDescriptionCount = 0;
+  info.vertexAttributeDescriptionCount = 0;
+  return info;
+}
+
+VkPipelineShaderStageCreateInfo
+pipeline_shader_stage_create_info(
+  VkShaderStageFlagBits stage,
+  VkShaderModule shaderModule)
+{
+  VkPipelineShaderStageCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+  info.stage = stage;
+  info.module = shaderModule;
+  info.pName = "main";
+  return info;
+}
+
+VkPipelineLayoutCreateInfo
+pipeline_layout_create_info()
+{
+  VkPipelineLayoutCreateInfo info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+  info.flags = 0;
+  info.setLayoutCount = 0;
+  info.pSetLayouts = nullptr;
+  info.pushConstantRangeCount = 0;
+  info.pPushConstantRanges = nullptr;
+  return info;
+}
+
+// pipeline_buiilder
+// VertexInputDescription VertexDescription
+// VkPipelineVertexInputStateCreateInfo VertexInputInfo
+// VkPipelineInputAssemblyStateCreateInfo InputAssembly
+// InputAssembler // VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+// Rasterizer // VK_POLYGONE_MODE_FILL
+// Rasterizer.cullMode = VK_CULL_MODE_NONE;//BACK_BIT;
+// Multisampling
+// colorBlendAttachemnt
+// DepthStencil
+
+VkPipeline
+build_pipeline(
+  const stDevice& device,
+  VkExtent2D windowExtend,
+  VkRenderPass renderPass,
+  VkPipelineLayout pipelineLayout,
+  stVertexInputDescription vertexDescription,
+  VkPipelineColorBlendAttachmentState colorBlendAttachment,
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly,
+  VkPipelineRasterizationStateCreateInfo rasterizer,
+  VkPipelineMultisampleStateCreateInfo multisampling,
+  VkPipelineDepthStencilStateCreateInfo depthStencil,
+  VkPipelineShaderStageCreateInfo* shaderStages,
+  uint32_t shaderStageCount,
+  stDeletionQueue* deletionQueue)
+{
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo = vertex_input_state_create_info();
+  vertexInputInfo.pVertexAttributeDescriptions = vertexDescription.Attributes.data();
+  vertexInputInfo.vertexAttributeDescriptionCount = (uint32_t)vertexDescription.Attributes.size();
+  vertexInputInfo.pVertexBindingDescriptions = vertexDescription.Bindings.data();
+  vertexInputInfo.vertexBindingDescriptionCount = (uint32_t)vertexDescription.Bindings.size();
+
+  VkPipelineViewportStateCreateInfo viewportState = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+
+  VkViewport viewport = {};
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  viewport.width = (float) windowExtend.width;
+  viewport.height = (float) windowExtend.height;
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+
+  VkRect2D scissor = {};
+  scissor.offset = { 0, 0 };
+  scissor.extent = windowExtend;
+
+  viewportState.viewportCount = 1;
+  viewportState.pViewports = &viewport;
+  viewportState.scissorCount = 1;
+  viewportState.pScissors = &scissor;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+  colorBlending.logicOpEnable = VK_FALSE;
+  colorBlending.logicOp = VK_LOGIC_OP_COPY;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkGraphicsPipelineCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+
+  pipelineInfo.stageCount = shaderStageCount;
+  pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.pDepthStencilState = &depthStencil;
+  pipelineInfo.layout = pipelineLayout;
+  pipelineInfo.renderPass = renderPass;
+  pipelineInfo.subpass = 0;
+  pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+  VkPipelineDynamicStateCreateInfo dynamicState = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+
+  VkDynamicState dynamicStates[] = 
+  {
+    VK_DYNAMIC_STATE_VIEWPORT,
+    VK_DYNAMIC_STATE_SCISSOR,
+    VK_DYNAMIC_STATE_DEPTH_BIAS
+  };
+
+  dynamicState.pDynamicStates = dynamicStates;
+  dynamicState.dynamicStateCount = ArrayCount(dynamicStates);
+
+  pipelineInfo.pDynamicState = &dynamicState;
+
+  VkPipeline pipeline = VK_NULL_HANDLE;
+
+  VK_CHECK(vkCreateGraphicsPipelines(device.LogicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
+
+  return  pipeline;
+}
+
 stPipeline
 create_pipeline(
   const stDevice& device,
   VkExtent2D windowExtend,
   VkRenderPass renderPass,
-  VkSampleCountFlagBits msaaSamples)
+  VkSampleCountFlagBits msaaSamples,
+  stDeletionQueue* deletionQueue)
 {
   stPipeline pipeline = {};
 
@@ -704,6 +889,23 @@ create_pipeline(
 
   VK_CHECK(vkCreateDescriptorSetLayout(device.LogicalDevice, &layoutInfo, nullptr, &pipeline.DescriptorSet));
 
+  // mesh layout
+  VkPipelineLayoutCreateInfo mesh_pipeline_layout_info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+  mesh_pipeline_layout_info.setLayoutCount = 1;
+  mesh_pipeline_layout_info.pSetLayouts = &pipeline.DescriptorSet;
+  mesh_pipeline_layout_info.pushConstantRangeCount = 0;
+  mesh_pipeline_layout_info.pPushConstantRanges = nullptr;
+
+	VkPushConstantRange push_constant;
+	push_constant.offset = 0;
+	push_constant.size = sizeof(stMeshPushConstants);
+	push_constant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+	mesh_pipeline_layout_info.pPushConstantRanges = &push_constant;
+	mesh_pipeline_layout_info.pushConstantRangeCount = 1;
+
+	VK_CHECK(vkCreatePipelineLayout(device.LogicalDevice, &mesh_pipeline_layout_info, nullptr, &pipeline.MeshLayout));
+
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
   pipelineLayoutInfo.setLayoutCount = 1;
   pipelineLayoutInfo.pSetLayouts = &pipeline.DescriptorSet;
@@ -746,6 +948,14 @@ create_pipeline(
   vkDestroyShaderModule(device.LogicalDevice, vertShaderModule, nullptr);
   vkDestroyShaderModule(device.LogicalDevice, fragShaderModule, nullptr);
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyDescriptorSetLayout(device.LogicalDevice, pipeline.DescriptorSet, nullptr);
+    vkDestroyPipeline(device.LogicalDevice, pipeline.Pipeline, nullptr);
+    vkDestroyPipelineLayout(device.LogicalDevice, pipeline.Layout, nullptr);
+    vkDestroyPipelineLayout(device.LogicalDevice, pipeline.MeshLayout, nullptr);
+  });
+
   return pipeline;
 }
 
@@ -774,7 +984,8 @@ create_buffer(
   VkDeviceSize size,
   VkBufferUsageFlags usage,
   VkMemoryPropertyFlags properties,
-  stBuffer& buffer)
+  stBuffer& buffer,
+  stDeletionQueue* deletionQueue)
 {
   VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
   bufferInfo.size = size;
@@ -793,6 +1004,12 @@ create_buffer(
   VK_CHECK(vkAllocateMemory(device.LogicalDevice, &allocInfo, nullptr, &buffer.Memory));
 
   vkBindBufferMemory(device.LogicalDevice, buffer.Buffer, buffer.Memory, 0);
+
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyBuffer(device.LogicalDevice, buffer.Buffer, nullptr);
+    vkFreeMemory(device.LogicalDevice, buffer.Memory, nullptr);
+  });
 }
 
 VkCommandBuffer
@@ -926,26 +1143,26 @@ load_mesh(
 	return true;
 }
 
-void
-create_uniform_buffer(
-  const stDevice& device,
-  stBuffer* buffers,
-  uint32_t count
-)
-{
-  VkDeviceSize bufferSize = sizeof(stUniformBufferObject);
-
-  for (size_t i = 0; i < count; i++)
-  {
-    create_buffer(
-      device,
-      bufferSize,
-      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-      buffers[i]
-    );
-  }
-}
+//void
+//create_uniform_buffer(
+//  const stDevice& device,
+//  stBuffer* buffers,
+//  uint32_t count
+//)
+//{
+//  VkDeviceSize bufferSize = sizeof(stUniformBufferObject);
+//
+//  for (size_t i = 0; i < count; i++)
+//  {
+//    create_buffer(
+//      device,
+//      bufferSize,
+//      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+//      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+//      buffers[i]
+//    );
+//  }
+//}
 
 void
 update_uniform_buffer(
@@ -957,10 +1174,11 @@ update_uniform_buffer(
 )
 {
   static float time = 0.0f;
-  time += (float) delta * 0.000000001f; // from ns to s
+  time += (float) delta * 0.000000001f * 0.1f; // from ns to s
 
   stUniformBufferObject ubo = {};
   ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+  ubo.Model *= glm::scale( ubo.Model, glm::vec3(0.005f) );
   ubo.View = glm::lookAt(glm::vec3(0.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
   ubo.Proj = glm::perspective(glm::radians(75.0f), windowSize.width / (float) windowSize.height, 0.1f, 10.0f);
   ubo.Proj[1][1] *= -1;
@@ -976,7 +1194,8 @@ create_descriptor_pools(
   const stDevice& device,
   VkDescriptorPoolSize* poolSizes, 
   uint32_t poolCount,
-  uint32_t swapchainImageCount
+  uint32_t swapchainImageCount,
+  stDeletionQueue* deletionQueue
 )
 {
   VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -987,6 +1206,11 @@ create_descriptor_pools(
   VkDescriptorPool descriptorPool;
 
   vkCreateDescriptorPool(device.LogicalDevice, &poolInfo, nullptr, &descriptorPool);
+
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyDescriptorPool(device.LogicalDevice, descriptorPool, nullptr);
+  });
 
   return descriptorPool;
 }
@@ -1340,7 +1564,7 @@ create_texture_image(
     imageSize,
     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-    staging
+    staging, nullptr
   ); 
 
   void* data;
@@ -1473,7 +1697,8 @@ create_depth_resources(
   const stDevice& device,
   VkSampleCountFlagBits msaaSamples,
   VkExtent2D swapChainExtent,
-  VkCommandPool commandPool)
+  VkCommandPool commandPool,
+  stDeletionQueue* deletionQueue)
 {
   VkFormat depthFormat = find_depth_format(device);
 
@@ -1501,6 +1726,13 @@ create_depth_resources(
     1
   );
 
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyImageView(device.LogicalDevice, depthImage.View, nullptr);
+    vkDestroyImage(device.LogicalDevice, depthImage.Src, nullptr);
+    vkFreeMemory(device.LogicalDevice, depthImage.Memory, nullptr);
+  });
+
   return depthImage;
 }
 
@@ -1510,7 +1742,8 @@ create_color_resources(
   VkExtent2D swapChainExtent,
   VkFormat swapchainImageFormat,
   VkSampleCountFlagBits msaaSamples,
-  VkCommandPool commandPool)
+  VkCommandPool commandPool,
+  stDeletionQueue* deletionQueue)
 {
   stImage colorImage = create_image(
     device,
@@ -1526,6 +1759,13 @@ create_color_resources(
   );
 
   create_image_view(device, colorImage, swapchainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyImageView(device.LogicalDevice, colorImage.View, nullptr);
+    vkDestroyImage(device.LogicalDevice, colorImage.Src, nullptr);
+    vkFreeMemory(device.LogicalDevice, colorImage.Memory, nullptr);
+  });
 
   return colorImage;
 }

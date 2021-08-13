@@ -12,6 +12,36 @@
 }
 
 struct
+stDeletionQueue
+{
+  std::deque<std::function<void()>> Deletors;
+
+  void PushFunction(std::function<void()>&& function)
+  {
+    Deletors.push_back(function);
+  }
+
+  void Flush()
+  {
+    for (auto it = Deletors.rbegin(); it != Deletors.rend(); it++)
+    {
+      (*it)();
+    }
+
+    Deletors.clear();
+  }
+};
+
+struct
+stVertexInputDescription
+{
+  std::vector<VkVertexInputBindingDescription> Bindings;
+  std::vector<VkVertexInputAttributeDescription> Attributes;
+
+  VkPipelineVertexInputStateCreateFlags Flags = 0;
+};
+
+struct
 stVertex
 {
 	alignas(16) glm::vec3 Position = { 0.0f, 0.0f, 0.0f };
@@ -82,6 +112,7 @@ stPipeline
 {
   VkPipeline Pipeline = VK_NULL_HANDLE;
   VkPipelineLayout Layout = VK_NULL_HANDLE;
+  VkPipelineLayout MeshLayout = VK_NULL_HANDLE;
   VkDescriptorSetLayout DescriptorSet = VK_NULL_HANDLE;
 };
 
@@ -91,6 +122,13 @@ stUniformBufferObject
   alignas(16) glm::mat4 Model;
   alignas(16) glm::mat4 View;
   alignas(16) glm::mat4 Proj;
+};
+
+struct
+stMeshPushConstants
+{
+  glm::vec4 Data;
+  glm::mat4 Model;
 };
 
 struct
@@ -126,7 +164,8 @@ stMesh
 VkSurfaceKHR
 CreateSurface(
   VkInstance instance,
-  const stWindow& window
+  const stWindow& window,
+  stDeletionQueue* deletionQueue
 );
 
 VkExtent2D
@@ -134,28 +173,8 @@ ChooseSwapExtent(
   const VkSurfaceCapabilitiesKHR& capabilities
 );
 
-struct
-stDeletionQueue
-{
-  std::deque<std::function<void()>> Deletors;
-
-  void PushFunction(std::function<void()>&& function)
-  {
-    Deletors.push_back(function);
-  }
-
-  void Flush()
-  {
-    for (auto it = Deletors.rbegin(); it != Deletors.rend(); it++)
-    {
-      (*it)();
-    }
-
-    Deletors.clear();
-  }
-};
-
 #include "vulkan_initializers.h"
+#include "vulkan_shaders.h"
 
 #define MAX_PHYSICAL_DEVICE_COUNT 16
 #define MAX_SWAPCHAIN_IMAGE_COUNT 16
@@ -233,23 +252,24 @@ stRenderer::Init(
 {
   VK_CHECK(volkInitialize());
 
-  Instance = init::create_instance();
+  Instance = init::create_instance(
+    VK_API_VERSION_1_1,
+    "default_app",
+    VK_MAKE_VERSION(0, 0, 1),
+    "default_engine",
+    VK_MAKE_VERSION(0, 0, 1),
+    &Deletion
+  );
 
   volkLoadInstance(Instance);
 
-  Surface = CreateSurface(Instance, window);
-
-  Deletion.PushFunction([=]{
-    vkDestroySurfaceKHR(Instance, Surface, nullptr);
-    vkDestroyInstance(Instance, nullptr);
-  });
+  Surface = CreateSurface(Instance, window, &Deletion);
 
   VK_CHECK(vkEnumeratePhysicalDevices(
     Instance,
     &PhysicalDeviceCount,
     PhysicalDevices)
   );
-
   assert(PhysicalDeviceCount > 0);
 
   Device.PhysicalDevice = init::pick_device(PhysicalDevices, PhysicalDeviceCount);
@@ -257,30 +277,16 @@ stRenderer::Init(
 
   SamplesFlag = init::get_max_usable_sample_count(Device);
 
-  Device = init::create_device(Device.PhysicalDevice, Surface);
-
-  Deletion.PushFunction([=]{
-    vkDestroyDevice(Device.LogicalDevice, nullptr);
-  });
+  Device = init::create_device(Device.PhysicalDevice, Surface, &Deletion);
 
   for (size_t i = 0; i < SwapchainImageCount; i++)
   {
-    AcquireSemaphores[i] = init::create_semaphore(Device);
-    ReleaseSemaphores[i] = init::create_semaphore(Device);
-    InFlightFence[i] = init::create_fence(Device);
-
-    Deletion.PushFunction([=]{
-      vkDestroySemaphore(Device.LogicalDevice, AcquireSemaphores[i], nullptr);
-      vkDestroySemaphore(Device.LogicalDevice, ReleaseSemaphores[i], nullptr);
-      vkDestroyFence(Device.LogicalDevice, InFlightFence[i], nullptr);
-    });
+    AcquireSemaphores[i] = init::create_semaphore(Device, &Deletion);
+    ReleaseSemaphores[i] = init::create_semaphore(Device, &Deletion);
+    InFlightFence[i] = init::create_fence(Device, &Deletion);
   }
 
-  CommandPool = init::create_command_pool(Device, 0);
-
-  Deletion.PushFunction([=]{
-    vkDestroyCommandPool(Device.LogicalDevice, CommandPool, nullptr);
-  });
+  CommandPool = init::create_command_pool(Device, 0, &Deletion);
 
   TexImage = init::create_texture(Device, CommandPool, "./data/models/cube/default.png", &Deletion);
 
@@ -296,54 +302,30 @@ stRenderer::CreateSwapchain()
     SwapchainImageFormat,
     SwapchainExtent,
     SwapchainImages,
-    SwapchainImageCount
+    SwapchainImageCount,
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    VK_PRESENT_MODE_MAILBOX_KHR,
+    &SwapchainDeletion
   );
 
-  SwapchainDeletion.PushFunction([=]{
-    vkDestroySwapchainKHR(Device.LogicalDevice, Swapchain, nullptr);
-  });
+  ForwardRenderPass = init::create_render_pass(Device, SwapchainImageFormat, SamplesFlag, &SwapchainDeletion);
 
-  ForwardRenderPass = init::create_render_pass(Device, SwapchainImageFormat, SamplesFlag);
+  ColorImage = init::create_color_resources(Device, SwapchainExtent, SwapchainImageFormat, SamplesFlag, CommandPool, &SwapchainDeletion);
 
-  SwapchainDeletion.PushFunction([=]{
-    vkDestroyRenderPass(Device.LogicalDevice, ForwardRenderPass, nullptr);
-  });
-
-  ColorImage = init::create_color_resources(Device, SwapchainExtent, SwapchainImageFormat, SamplesFlag, CommandPool);
-  DepthImage = init::create_depth_resources(Device, SamplesFlag, SwapchainExtent, CommandPool);
+  DepthImage = init::create_depth_resources(Device, SamplesFlag, SwapchainExtent, CommandPool, &SwapchainDeletion);
 
   for (size_t i = 0; i < SwapchainImageCount; i++)
   {
-    Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImages[i].View, DepthImage.View, ColorImage.View);
-
-    SwapchainDeletion.PushFunction([=]{
-      vkDestroyFramebuffer(Device.LogicalDevice, Framebuffers[i], nullptr);
-      vkDestroyImageView(Device.LogicalDevice, SwapchainImages[i].View, nullptr);
-    });
+    Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImages[i].View, DepthImage.View, ColorImage.View, &SwapchainDeletion);
   }
 
-  SwapchainDeletion.PushFunction([=]{
-    vkDestroyImageView(Device.LogicalDevice, DepthImage.View, nullptr);
-    vkDestroyImage(Device.LogicalDevice, DepthImage.Src, nullptr);
-    vkFreeMemory(Device.LogicalDevice, DepthImage.Memory, nullptr);
-
-    vkDestroyImageView(Device.LogicalDevice, ColorImage.View, nullptr);
-    vkDestroyImage(Device.LogicalDevice, ColorImage.Src, nullptr);
-    vkFreeMemory(Device.LogicalDevice, ColorImage.Memory, nullptr);
-  });
-
-  GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag);
-
-  SwapchainDeletion.PushFunction([=]{
-    vkDestroyDescriptorSetLayout(Device.LogicalDevice, GraphicsPipeline.DescriptorSet, nullptr);
-    vkDestroyPipeline(Device.LogicalDevice, GraphicsPipeline.Pipeline, nullptr);
-    vkDestroyPipelineLayout(Device.LogicalDevice, GraphicsPipeline.Layout, nullptr);
-  });
+  GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
 
   stMesh mesh;
 
   // init::load_mesh(mesh, "./data/models/pirate/pirate.obj");
   init::load_mesh(mesh, "./data/models/cube/cube.obj");
+  // init::load_mesh(mesh, "./data/models/the_nobel/the_nobel.obj");
   // init::load_mesh(mesh, "./data/models/bunny/bunny.obj");
 
   { // CREATE VERTEX BUFFER
@@ -354,25 +336,21 @@ stRenderer::CreateSwapchain()
       Device,
       bufferSize,
       VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, nullptr
     );
 
     void* data;
     vkMapMemory(Device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
-        memcpy(data, mesh.Vertices.data(), (size_t) bufferSize);
+      memcpy(data, mesh.Vertices.data(), (size_t) bufferSize);
     vkUnmapMemory(Device.LogicalDevice, stagingBuffer.Memory);
 
     init::create_buffer(
       Device,
       bufferSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VertexBuffer
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VertexBuffer,
+      &SwapchainDeletion
     );
-
-    SwapchainDeletion.PushFunction([=]{
-      vkDestroyBuffer(Device.LogicalDevice, VertexBuffer.Buffer, nullptr);
-      vkFreeMemory(Device.LogicalDevice, VertexBuffer.Memory, nullptr);
-    });
 
     init::copy_buffer(Device, stagingBuffer.Buffer, VertexBuffer.Buffer, bufferSize, CommandPool);
 
@@ -388,25 +366,20 @@ stRenderer::CreateSwapchain()
       Device,
       bufferSize,
       VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer
+      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, nullptr
     );
 
     void* data;
     vkMapMemory(Device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
-        memcpy(data, mesh.Indices.data(), (size_t) bufferSize);
+      memcpy(data, mesh.Indices.data(), (size_t) bufferSize);
     vkUnmapMemory(Device.LogicalDevice, stagingBuffer.Memory);
 
     init::create_buffer(
       Device,
       bufferSize,
       VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, IndexBuffer
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, IndexBuffer, &SwapchainDeletion
     );
-
-    SwapchainDeletion.PushFunction([=]{
-      vkDestroyBuffer(Device.LogicalDevice, IndexBuffer.Buffer, nullptr);
-      vkFreeMemory(Device.LogicalDevice, IndexBuffer.Memory, nullptr);
-    });
 
     init::copy_buffer(Device, stagingBuffer.Buffer, IndexBuffer.Buffer, bufferSize, CommandPool);
 
@@ -425,17 +398,9 @@ stRenderer::CreateSwapchain()
       bufferSize,
       VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-      UniformBuffers[i]
+      UniformBuffers[i], &SwapchainDeletion
     );
   }
-
-  SwapchainDeletion.PushFunction([=]{
-    for (size_t i = 0; i < SwapchainImageCount; i++)
-    {
-      vkDestroyBuffer(Device.LogicalDevice, UniformBuffers[i].Buffer, nullptr);
-      vkFreeMemory(Device.LogicalDevice, UniformBuffers[i].Memory, nullptr);
-    }
-  });
 
   std::array<VkDescriptorPoolSize, 2> poolSizes = {};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -443,11 +408,7 @@ stRenderer::CreateSwapchain()
   poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   poolSizes[1].descriptorCount = SwapchainImageCount;
 
-  DescriptorPool = init::create_descriptor_pools(Device, poolSizes.data(), (uint32_t)poolSizes.size(), SwapchainImageCount);
-
-  SwapchainDeletion.PushFunction([=]{
-    vkDestroyDescriptorPool(Device.LogicalDevice, DescriptorPool, nullptr);
-  });
+  DescriptorPool = init::create_descriptor_pools(Device, poolSizes.data(), (uint32_t)poolSizes.size(), SwapchainImageCount, &SwapchainDeletion);
 
   init::create_descriptor_sets(Device, GraphicsPipeline, DescriptorPool, DescriptorSets, UniformBuffers, SwapchainImageCount, TexImage);
 
@@ -486,15 +447,8 @@ stRenderer::CreateSwapchain()
 
         vkCmdEndRenderPass(cb);
       }
-    }, CommandBuffers, SwapchainImageCount
+    }, CommandBuffers, SwapchainImageCount, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 0, &SwapchainDeletion
   );
-    
-  SwapchainDeletion.PushFunction([=]{
-    for (size_t i = 0; i < SwapchainImageCount; i++)
-    {
-      vkFreeCommandBuffers(Device.LogicalDevice, CommandPool, 1, &CommandBuffers[i]);
-    }
-  });
 }
 
 void
@@ -537,7 +491,24 @@ stRenderer::Render(double delta)
 
   VkPipelineStageFlags submitStageFlags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
-  init::update_uniform_buffer(Device, UniformBuffers, delta, imageIndex, SwapchainExtent);
+  //
+
+  static float time = 0.0f;
+  time += (float) delta * 0.000000001f * 0.1f; // from ns to s
+
+  stUniformBufferObject ubo = {};
+  ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+  ubo.Model *= glm::scale( ubo.Model, glm::vec3(0.5f) );
+  ubo.View = glm::lookAt(glm::vec3(0.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+  ubo.Proj = glm::perspective(glm::radians(75.0f), SwapchainExtent.width / (float) SwapchainExtent.height, 0.1f, 10.0f);
+  ubo.Proj[1][1] *= -1;
+
+  void* data;
+  vkMapMemory(Device.LogicalDevice, UniformBuffers[imageIndex].Memory, 0, sizeof(ubo), 0, &data);
+    memcpy(data, &ubo, sizeof(ubo));
+  vkUnmapMemory(Device.LogicalDevice, UniformBuffers[imageIndex].Memory);
+
+  //
 
   VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 

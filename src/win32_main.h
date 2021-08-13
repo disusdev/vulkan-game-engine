@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 #include <array>
+#include <sstream>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -225,7 +226,8 @@ sys::UpdateInput()
 VkSurfaceKHR
 CreateSurface(
   VkInstance instance,
-  const stWindow& window)
+  const stWindow& window,
+  stDeletionQueue* deletionQueue)
 {
   VkSurfaceKHR surface = VK_NULL_HANDLE;
   {
@@ -240,6 +242,12 @@ CreateSurface(
     );
     assert(Result == VK_SUCCESS);
   }
+
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroySurfaceKHR(instance, surface, nullptr);
+  });
+
   return surface;
 }
 
