@@ -1,5 +1,6 @@
 
 #include <windows.h>
+#include <windowsx.h>
 
 #include <assert.h>
 
@@ -30,8 +31,10 @@ typedef double f64;
 struct
 stWindow
 {
+  glm::vec2 Size = { 0, 0 };
   void* Instance = nullptr;
   void* WindowHendle = nullptr;
+  bool Focused = false;
 };
 
 // ############################################################################
@@ -76,6 +79,7 @@ UpdateInput();
 // ############################################################################
 
 #include "input.h"
+#include "camera.h"
 #include "engine.h"
 
 engine g_Engine = {};
@@ -106,9 +110,40 @@ sys::WindowProc(
 {
   switch (Message)
   {
+  case WM_SETFOCUS:
+  {
+    g_Engine.Window.Focused = true;
+  } break;
+  case WM_KILLFOCUS:
+  {
+    g_Engine.Window.Focused = false;
+  } break;
+  case WM_MOUSEMOVE:
+  {
+    //g_Engine.Input.CorrentMousePosition.x = (float)GET_X_LPARAM(LParam);
+    //g_Engine.Input.CorrentMousePosition.y = (float)GET_Y_LPARAM(LParam);
+  } break;
+  //case WM_MOUSELEAVE:
+  //{
+  //  g_Engine.Input.MousePosition.x = 0.0f;
+  //  g_Engine.Input.MousePosition.y = 0.0f;
+  //} break;
+  case WM_MOVE:
+  {
+    RECT r;
+    GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
+    g_Engine.Window.Size.x = r.right - r.left;
+    g_Engine.Window.Size.y = r.bottom - r.top;
+    g_Engine.Input.CenterPosition = { r.left + g_Engine.Window.Size.x / 2, r.top + g_Engine.Window.Size.y / 2 };
+  } break;
   case WM_SIZE:
   {
     g_Engine.Resize();
+    RECT r;
+    GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
+    g_Engine.Window.Size.x = r.right - r.left;
+    g_Engine.Window.Size.y = r.bottom - r.top;
+    g_Engine.Input.CenterPosition = { r.left + g_Engine.Window.Size.x / 2, r.top + g_Engine.Window.Size.y / 2 };
   } break;
   case WM_DESTROY:
   case WM_CLOSE:
@@ -164,6 +199,13 @@ sys::WindowCreate(
   if (Window->WindowHendle)
   {
     ShowWindow((HWND)Window->WindowHendle, SW_SHOW);
+    ShowCursor(false);
+    RECT r;
+    GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
+    g_Engine.Window.Size.x = r.right - r.left;
+    g_Engine.Window.Size.y = r.bottom - r.top;
+    g_Engine.Input.CenterPosition = { r.left + g_Engine.Window.Size.x / 2, r.top + g_Engine.Window.Size.y / 2 };
+    SetCursorPos( g_Engine.Input.CenterPosition.x, g_Engine.Input.CenterPosition.y );
     return true;
   }
 
@@ -196,25 +238,48 @@ void
 sys::UpdateInput()
 {
   g_Engine.Input.KeysHold = 0x0;
+  g_Engine.Input.RotationDelta.x = 0.0f;
+  g_Engine.Input.RotationDelta.y = 0.0f;
 
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_UP) & 0x8000
-    ? g_Engine.Input.KeysHold | enKeyAction::KEY_FORWARD
-    : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_DOWN) & 0x8000
-    ? g_Engine.Input.KeysHold | enKeyAction::KEY_BACKWARD
-    : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LEFT) & 0x8000
-    ? g_Engine.Input.KeysHold | enKeyAction::KEY_LEFT
-    : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_RIGHT) & 0x8000
-    ? g_Engine.Input.KeysHold | enKeyAction::KEY_RIGHT
-    : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_SPACE) & 0x8000
-    ? g_Engine.Input.KeysHold | enKeyAction::KEY_UP
-    : g_Engine.Input.KeysHold;
-  g_Engine.Input.KeysHold = GetAsyncKeyState(VK_CONTROL) & 0x8000
-    ? g_Engine.Input.KeysHold | enKeyAction::KEY_UP
-    : g_Engine.Input.KeysHold;
+  if (g_Engine.Input.WorkInBackground || g_Engine.Window.Focused)
+  {
+      g_Engine.Input.KeysHold = GetAsyncKeyState('W') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_FORWARD
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState('S') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_BACKWARD
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState('A') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_LEFT
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState('D') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_RIGHT
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState('Q') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_Q
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState('E') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_E
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState(VK_SPACE) & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_UP
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LSHIFT) & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_DOWN
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState(VK_TAB) & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_TAB
+        : g_Engine.Input.KeysHold;
+
+      if (g_Engine.Camera.Locked)
+      {
+        POINT p;
+        GetCursorPos(&p);
+        g_Engine.Input.CurrentMousePosition = {p.x,p.y};
+        g_Engine.Input.RotationDelta = g_Engine.Input.CurrentMousePosition - g_Engine.Input.CenterPosition;
+        SetCursorPos( g_Engine.Input.CenterPosition.x, g_Engine.Input.CenterPosition.y );
+      }
+  }
 
   g_Engine.Input.KeysDown = (g_Engine.Input.KeysHold
     ^ g_Engine.Input.KeysPrevHold) & g_Engine.Input.KeysHold;

@@ -10,6 +10,7 @@ engine
   stWindow Window = {};
   stInputState Input;
   stRenderer Renderer;
+  stCamera Camera;
   f64 AwakeTime = 0.0;
   bool IsRunning = false;
 
@@ -34,6 +35,11 @@ engine
 
       sys::UpdateInput();
 
+      if (Input.GetKeyDown(KEY_EXIT))
+      {
+        IsRunning = false;
+      }
+
       if (!IsRunning) break;
 
       fresh = sys::GetTime();
@@ -45,6 +51,7 @@ engine
       accumulator += delta;
 
       // update()
+      Camera.update_camera(Input, delta * 0.000000001);
 
       while (accumulator >= FIXED_TIME)
       {
@@ -53,7 +60,7 @@ engine
         timer += FIXED_TIME;
       }
 
-      Renderer.Render(delta);
+      Renderer.Render(Camera, delta * 0.000000001);
 
       sys::SwapBuffers(Window);
     }

@@ -195,7 +195,7 @@ stRenderer
   Term();
 
   void
-  Render(double delta = 0.0f);
+  Render(stCamera& camera, double delta = 0.0f);
 
   VkInstance Instance = VK_NULL_HANDLE;
   VkSurfaceKHR Surface = VK_NULL_HANDLE;
@@ -474,7 +474,7 @@ stRenderer::Term()
 }
 
 void
-stRenderer::Render(double delta)
+stRenderer::Render(stCamera& camera, double delta)
 {
   vkWaitForFences(Device.LogicalDevice, 1, &InFlightFence[CurrentFrame], VK_TRUE, ~0ull);
 
@@ -494,14 +494,13 @@ stRenderer::Render(double delta)
   //
 
   static float time = 0.0f;
-  time += (float) delta * 0.000000001f * 0.1f; // from ns to s
+  time += (float) delta * 0.1f;
 
   stUniformBufferObject ubo = {};
-  ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-  ubo.Model *= glm::scale( ubo.Model, glm::vec3(0.5f) );
-  ubo.View = glm::lookAt(glm::vec3(0.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-  ubo.Proj = glm::perspective(glm::radians(75.0f), SwapchainExtent.width / (float) SwapchainExtent.height, 0.1f, 10.0f);
-  ubo.Proj[1][1] *= -1;
+  ubo.Model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+  // ubo.Model *= glm::scale( ubo.Model, glm::vec3(0.5f) );
+  ubo.View = camera.get_view_matrix();
+  ubo.Proj = camera.get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
 
   void* data;
   vkMapMemory(Device.LogicalDevice, UniformBuffers[imageIndex].Memory, 0, sizeof(ubo), 0, &data);
