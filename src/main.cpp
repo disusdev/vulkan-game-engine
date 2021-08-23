@@ -1,6 +1,10 @@
 
 #include "config.h"
 
+#include "extern.h"
+
+#include "usedstd.h"
+
 #if CONSOLE_APP
 #include "stdio.h"
 #endif
