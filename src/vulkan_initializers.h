@@ -1426,7 +1426,7 @@ create_texture_image(
   stTexture texture = {};
   int texWidth, texHeight, texChannels;
   stbi_uc* pixels = stbi_load(path, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-  texture.MipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
+  texture.MipLevels = static_cast<uint32_t>(std::floor(std::log2(utils::Max(texWidth, texHeight)))) + 1;
   VkDeviceSize imageSize = texWidth * texHeight * 4;
   assert(pixels);
 

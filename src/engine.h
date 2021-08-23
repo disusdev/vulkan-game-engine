@@ -85,7 +85,7 @@ engine
       while (accumulator >= FIXED_TIME)
       {
         // physics update
-        PhysicsSystem.Update(FIXED_TIME);
+        PhysicsSystem.Update((float)FIXED_TIME);
 
         accumulator -= FIXED_TIME;
         timer += FIXED_TIME;

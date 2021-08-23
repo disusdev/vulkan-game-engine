@@ -5,6 +5,8 @@
 
 #include "usedstd.h"
 
+#include "utils.h"
+
 #if CONSOLE_APP
 #include "stdio.h"
 #endif

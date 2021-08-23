@@ -108,8 +108,8 @@ sys::WindowProc(
   {
     RECT r;
     GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
-    g_Engine.Window.Size.x = r.right - r.left;
-    g_Engine.Window.Size.y = r.bottom - r.top;
+    g_Engine.Window.Size.x = (float)(r.right - r.left);
+    g_Engine.Window.Size.y = (float)(r.bottom - r.top);
     g_Engine.Input.CenterPosition = { r.left + g_Engine.Window.Size.x / 2, r.top + g_Engine.Window.Size.y / 2 };
   } break;
   case WM_SIZE:
@@ -117,8 +117,8 @@ sys::WindowProc(
     g_Engine.Resize();
     RECT r;
     GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
-    g_Engine.Window.Size.x = r.right - r.left;
-    g_Engine.Window.Size.y = r.bottom - r.top;
+    g_Engine.Window.Size.x = (float)(r.right - r.left);
+    g_Engine.Window.Size.y = (float)(r.bottom - r.top);
     g_Engine.Input.CenterPosition = { r.left + g_Engine.Window.Size.x / 2, r.top + g_Engine.Window.Size.y / 2 };
   } break;
   case WM_DESTROY:
@@ -177,10 +177,10 @@ sys::WindowCreate(
     ShowWindow((HWND)Window->WindowHendle, SW_SHOW);
     RECT r;
     GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
-    g_Engine.Window.Size.x = r.right - r.left;
-    g_Engine.Window.Size.y = r.bottom - r.top;
+    g_Engine.Window.Size.x = (float)(r.right - r.left);
+    g_Engine.Window.Size.y = (float)(r.bottom - r.top);
     g_Engine.Input.CenterPosition = { r.left + g_Engine.Window.Size.x / 2, r.top + g_Engine.Window.Size.y / 2 };
-    SetCursorPos( g_Engine.Input.CenterPosition.x, g_Engine.Input.CenterPosition.y );
+    SetCursorPos( (int)g_Engine.Input.CenterPosition.x, (int)g_Engine.Input.CenterPosition.y );
     return true;
   }
 
@@ -218,7 +218,7 @@ sys::UpdateInput()
 
   if (g_Engine.Input.GetKeyDown(KEY_TAB))
   {
-      SetCursorPos( g_Engine.Input.CenterPosition.x, g_Engine.Input.CenterPosition.y );
+      SetCursorPos( (int)g_Engine.Input.CenterPosition.x, (int)g_Engine.Input.CenterPosition.y );
       ShowCursor(g_Engine.Camera.Locked);
       g_Engine.Camera.Locked = !g_Engine.Camera.Locked;
   }
@@ -259,7 +259,7 @@ sys::UpdateInput()
         GetCursorPos(&p);
         g_Engine.Input.CurrentMousePosition = {p.x,p.y};
         g_Engine.Input.RotationDelta = g_Engine.Input.CurrentMousePosition - g_Engine.Input.CenterPosition;
-        SetCursorPos( g_Engine.Input.CenterPosition.x, g_Engine.Input.CenterPosition.y );
+        SetCursorPos( (int)g_Engine.Input.CenterPosition.x, (int)g_Engine.Input.CenterPosition.y );
       }
   }
 
@@ -298,23 +298,6 @@ CreateSurface(
   return surface;
 }
 
-template<class T> 
-const T& max(const T& a, const T& b)
-{
-    return (a < b) ? b : a;
-}
-
-template<class T> 
-const T& min(const T& a, const T& b)
-{
-    return (a < b) ? b : a;
-}
-
-template <typename T>
-T clip(const T& n, const T& lower, const T& upper) {
-  return max(lower, min(n, upper));
-}
-
 VkExtent2D
 ChooseSwapExtent(
   const VkSurfaceCapabilitiesKHR& capabilities)
@@ -327,8 +310,8 @@ ChooseSwapExtent(
   {
     VkExtent2D actualExtent = { 1264, 681 };
 
-    actualExtent.width = clip(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-    actualExtent.height = clip(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+    actualExtent.width = utils::Clip(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+    actualExtent.height = utils::Clip(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 
     return actualExtent;
   }
