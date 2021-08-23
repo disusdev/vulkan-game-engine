@@ -555,11 +555,9 @@ void
 create_command_buffers(
   const stDevice& device,
   VkCommandPool commandPool,
-  const std::initializer_list<std::function<void(VkCommandBuffer, uint32_t)>> darwCommands,
   VkCommandBuffer* commandBuffers = nullptr,
   uint32_t count = 0,
   VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-  VkCommandBufferUsageFlags flags = 0,
   stDeletionQueue* deletionQueue = nullptr)
 {
   VkCommandBufferAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
@@ -569,26 +567,10 @@ create_command_buffers(
 
   VK_CHECK(vkAllocateCommandBuffers(device.LogicalDevice, &allocInfo, commandBuffers));
 
-  for (uint32_t i = 0; i < count; i++)
-  {
-    VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    beginInfo.flags = flags;
-    beginInfo.pInheritanceInfo = nullptr;
-
-    VK_CHECK(vkBeginCommandBuffer(commandBuffers[i], &beginInfo));
-
-    for (auto&& command : darwCommands)
-    {
-      command(commandBuffers[i], i);
-    }
-
-    VK_CHECK(vkEndCommandBuffer(commandBuffers[i]));
-
-    if (deletionQueue)
-    deletionQueue->PushFunction([=]{
-      vkFreeCommandBuffers(device.LogicalDevice, commandPool, 1, &commandBuffers[i]);
-    });
-  }
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkFreeCommandBuffers(device.LogicalDevice, commandPool, count, commandBuffers);
+  });
 }
 
 VkShaderModule
@@ -773,8 +755,8 @@ create_pipeline(
 
   VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-  auto bindingDescription = stVertex::GetBindingDescription();
-  auto attributeDescriptions = stVertex::GetAttributeDescriptions();
+  auto bindingDescription = GetBindingDescription<stVertex>();
+  auto attributeDescriptions = GetAttributeDescriptions();
 
   // bindings
   VkPipelineVertexInputStateCreateInfo vertexInputInfo = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
@@ -889,33 +871,20 @@ create_pipeline(
 
   VK_CHECK(vkCreateDescriptorSetLayout(device.LogicalDevice, &layoutInfo, nullptr, &pipeline.DescriptorSet));
 
-  // mesh layout
-  VkPipelineLayoutCreateInfo mesh_pipeline_layout_info = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
-  mesh_pipeline_layout_info.setLayoutCount = 1;
-  mesh_pipeline_layout_info.pSetLayouts = &pipeline.DescriptorSet;
-  mesh_pipeline_layout_info.pushConstantRangeCount = 0;
-  mesh_pipeline_layout_info.pPushConstantRanges = nullptr;
-
-	VkPushConstantRange push_constant;
+  VkPushConstantRange push_constant;
 	push_constant.offset = 0;
 	push_constant.size = sizeof(stMeshPushConstants);
 	push_constant.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-	mesh_pipeline_layout_info.pPushConstantRanges = &push_constant;
-	mesh_pipeline_layout_info.pushConstantRangeCount = 1;
-
-	VK_CHECK(vkCreatePipelineLayout(device.LogicalDevice, &mesh_pipeline_layout_info, nullptr, &pipeline.MeshLayout));
-
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
   pipelineLayoutInfo.setLayoutCount = 1;
   pipelineLayoutInfo.pSetLayouts = &pipeline.DescriptorSet;
-  pipelineLayoutInfo.pushConstantRangeCount = 0;
-  pipelineLayoutInfo.pPushConstantRanges = nullptr;
+  pipelineLayoutInfo.pushConstantRangeCount = 1;
+  pipelineLayoutInfo.pPushConstantRanges = &push_constant;
 
   VK_CHECK(vkCreatePipelineLayout(device.LogicalDevice, &pipelineLayoutInfo, nullptr, &pipeline.Layout));
 
-  VkPipelineDepthStencilStateCreateInfo depthStencil{};
-  depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  VkPipelineDepthStencilStateCreateInfo depthStencil = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
   depthStencil.depthTestEnable = VK_TRUE;
   depthStencil.depthWriteEnable = VK_TRUE;
   depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
@@ -1072,77 +1041,6 @@ copy_buffer(
   end_single_time_command(device, commandPool, commandBuffer);
 }
 
-bool
-load_mesh(
-  stMesh& mesh,
-  const char* path
-)
-{
-  fastObjMesh* obj = fast_obj_read(path);
-	if (!obj)
-	{
-		printf("Error loading %s: file not found\n", path);
-		return false;
-	}
-
-	size_t total_indices = 0;
-
-	for (unsigned int i = 0; i < obj->face_count; ++i)
-		total_indices += 3 * (obj->face_vertices[i] - 2);
-
-	std::vector<stVertex> vertices(total_indices);
-
-	size_t vertex_offset = 0;
-	size_t index_offset = 0;
-
-	for (unsigned int i = 0; i < obj->face_count; ++i)
-	{
-		for (unsigned int j = 0; j < obj->face_vertices[i]; ++j)
-		{
-			fastObjIndex gi = obj->indices[index_offset + j];
-
-			stVertex v =
-			{
-			    {obj->positions[gi.p * 3 + 0],
-			    obj->positions[gi.p * 3 + 1],
-			    obj->positions[gi.p * 3 + 2]},
-			    {obj->normals[gi.n * 3 + 0],
-			    obj->normals[gi.n * 3 + 1],
-			    obj->normals[gi.n * 3 + 2]},
-			    {obj->texcoords[gi.t * 2 + 0],
-			    obj->texcoords[gi.t * 2 + 1]},
-			};
-
-			// triangulate polygon on the fly; offset-3 is always the first polygon vertex
-			if (j >= 3)
-			{
-				vertices[vertex_offset + 0] = vertices[vertex_offset - 3];
-				vertices[vertex_offset + 1] = vertices[vertex_offset - 1];
-				vertex_offset += 2;
-			}
-
-			vertices[vertex_offset] = v;
-			vertex_offset++;
-		}
-
-		index_offset += obj->face_vertices[i];
-	}
-
-	fast_obj_destroy(obj);
-
-	std::vector<unsigned int> remap(total_indices);
-
-	size_t total_vertices = meshopt_generateVertexRemap(&remap[0], NULL, total_indices, &vertices[0], total_indices, sizeof(stVertex));
-
-	mesh.Indices.resize(total_indices);
-	meshopt_remapIndexBuffer(&mesh.Indices[0], NULL, total_indices, &remap[0]);
-
-	mesh.Vertices.resize(total_vertices);
-	meshopt_remapVertexBuffer(&mesh.Vertices[0], &vertices[0], total_indices, sizeof(stVertex), &remap[0]);
-
-	return true;
-}
-
 //void
 //create_uniform_buffer(
 //  const stDevice& device,
@@ -1163,31 +1061,6 @@ load_mesh(
 //    );
 //  }
 //}
-
-void
-update_uniform_buffer(
-  const stDevice& device,
-  stBuffer* buffers,
-  double delta,
-  uint32_t index,
-  VkExtent2D windowSize
-)
-{
-  static float time = 0.0f;
-  time += (float) delta * 0.000000001f * 0.1f; // from ns to s
-
-  stUniformBufferObject ubo = {};
-  ubo.Model = glm::rotate(glm::mat4(1.0f),time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-  ubo.Model *= glm::scale( ubo.Model, glm::vec3(0.005f) );
-  ubo.View = glm::lookAt(glm::vec3(0.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-  ubo.Proj = glm::perspective(glm::radians(75.0f), windowSize.width / (float) windowSize.height, 0.1f, 10.0f);
-  ubo.Proj[1][1] *= -1;
-
-  void* data;
-  vkMapMemory(device.LogicalDevice, buffers[index].Memory, 0, sizeof(ubo), 0, &data);
-    memcpy(data, &ubo, sizeof(ubo));
-  vkUnmapMemory(device.LogicalDevice, buffers[index].Memory);
-}
 
 VkDescriptorPool
 create_descriptor_pools(
@@ -1238,33 +1111,33 @@ create_descriptor_sets(
 
   for (size_t i = 0; i < swapChainImageCount; i++)
   {
-    VkDescriptorBufferInfo bufferInfo{};
-    bufferInfo.buffer = uniformBuffers[i].Buffer;
-    bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(stUniformBufferObject);
+    //VkDescriptorBufferInfo bufferInfo{};
+    //bufferInfo.buffer = uniformBuffers[i].Buffer;
+    //bufferInfo.offset = 0;
+    //bufferInfo.range = sizeof(stUniformBufferObject);
 
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     imageInfo.imageView = texture.Image.View;
     imageInfo.sampler = texture.Sampler;
 
-    std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
+    std::array<VkWriteDescriptorSet, 1> descriptorWrites = {};
 
+    //descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    //descriptorWrites[0].dstSet = descriptorSets[i];
+    //descriptorWrites[0].dstBinding = 0;
+    //descriptorWrites[0].dstArrayElement = 0;
+    //descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    //descriptorWrites[0].descriptorCount = 1;
+    //descriptorWrites[0].pBufferInfo = &bufferInfo;
+    
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSets[i];
-    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstBinding = 1;
     descriptorWrites[0].dstArrayElement = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pBufferInfo = &bufferInfo;
-    
-    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[1].dstSet = descriptorSets[i];
-    descriptorWrites[1].dstBinding = 1;
-    descriptorWrites[1].dstArrayElement = 0;
-    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pImageInfo = &imageInfo;
+    descriptorWrites[0].pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device.LogicalDevice, (uint32_t)descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
   }
@@ -1768,6 +1641,85 @@ create_color_resources(
   });
 
   return colorImage;
+}
+
+stBuffer
+create_vertex_buffer(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  stMesh& mesh,
+  stDeletionQueue* deletionQueue = nullptr)
+{
+  stBuffer buffer = {};
+
+  VkDeviceSize bufferSize = sizeof(mesh.Vertices[0]) * mesh.Vertices.size();
+
+  stBuffer stagingBuffer = {};
+  init::create_buffer(
+    device,
+    bufferSize,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, nullptr
+  );
+
+  void* data;
+  vkMapMemory(device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
+    memcpy(data, mesh.Vertices.data(), (size_t) bufferSize);
+  vkUnmapMemory(device.LogicalDevice, stagingBuffer.Memory);
+
+  init::create_buffer(
+    device,
+    bufferSize,
+    VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer,
+    deletionQueue
+  );
+
+  init::copy_buffer(device, stagingBuffer.Buffer, buffer.Buffer, bufferSize, commandPool);
+
+  vkDestroyBuffer(device.LogicalDevice, stagingBuffer.Buffer, nullptr);
+  vkFreeMemory(device.LogicalDevice, stagingBuffer.Memory, nullptr);
+
+  return buffer;
+}
+
+stBuffer
+create_index_buffer(
+  const stDevice& device,
+  VkCommandPool commandPool,
+  stMesh& mesh,
+  stDeletionQueue* deletionQueue = nullptr)
+{
+  stBuffer buffer = {};
+
+  VkDeviceSize bufferSize = sizeof(mesh.Indices[0]) * mesh.Indices.size();
+
+  stBuffer stagingBuffer = {};
+  init::create_buffer(
+    device,
+    bufferSize,
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, nullptr
+  );
+
+  void* data;
+  vkMapMemory(device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
+    memcpy(data, mesh.Indices.data(), (size_t) bufferSize);
+  vkUnmapMemory(device.LogicalDevice, stagingBuffer.Memory);
+
+  init::create_buffer(
+    device,
+    bufferSize,
+    VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, deletionQueue
+  );
+
+  init::copy_buffer(device, stagingBuffer.Buffer, buffer.Buffer, bufferSize, commandPool);
+
+  vkDestroyBuffer(device.LogicalDevice, stagingBuffer.Buffer, nullptr);
+  vkFreeMemory(device.LogicalDevice, stagingBuffer.Memory, nullptr);
+
+  return buffer;
 }
 
 }

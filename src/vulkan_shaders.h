@@ -189,7 +189,7 @@ stShaderEffect::reflect_layout(
           if (it == binds.end())
           {
             binds[b.binding] = b;
-            //ly.bindings.push_back(b);
+            //ly.Bindings.push_back(b);
           }
           else {
             //merge flags

@@ -162,8 +162,8 @@ sys::GetTime()
   LARGE_INTEGER frequency;
   QueryPerformanceFrequency(&frequency);
   QueryPerformanceCounter(&time);
-  double nanoseconds_per_count = 1.0e9 / static_cast<double>(frequency.QuadPart);
-  return time.QuadPart * nanoseconds_per_count;
+  // double nanoseconds_per_count = 1.0e9 / static_cast<double>(frequency.QuadPart);
+  return time.QuadPart / static_cast<double>(frequency.QuadPart); // seconds
 }
 
 bool
@@ -199,7 +199,6 @@ sys::WindowCreate(
   if (Window->WindowHendle)
   {
     ShowWindow((HWND)Window->WindowHendle, SW_SHOW);
-    ShowCursor(false);
     RECT r;
     GetWindowRect((HWND)g_Engine.Window.WindowHendle, &r);
     g_Engine.Window.Size.x = r.right - r.left;
@@ -240,6 +239,13 @@ sys::UpdateInput()
   g_Engine.Input.KeysHold = 0x0;
   g_Engine.Input.RotationDelta.x = 0.0f;
   g_Engine.Input.RotationDelta.y = 0.0f;
+
+  if (g_Engine.Input.GetKeyDown(KEY_TAB))
+  {
+      SetCursorPos( g_Engine.Input.CenterPosition.x, g_Engine.Input.CenterPosition.y );
+      ShowCursor(g_Engine.Camera.Locked);
+      g_Engine.Camera.Locked = !g_Engine.Camera.Locked;
+  }
 
   if (g_Engine.Input.WorkInBackground || g_Engine.Window.Focused)
   {

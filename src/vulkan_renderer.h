@@ -41,47 +41,40 @@ stVertexInputDescription
   VkPipelineVertexInputStateCreateFlags Flags = 0;
 };
 
-struct
-stVertex
+template<typename T>
+VkVertexInputBindingDescription
+GetBindingDescription()
 {
-	alignas(16) glm::vec3 Position = { 0.0f, 0.0f, 0.0f };
-	alignas(16) glm::vec3 Normal = { 0.0f, 0.0f, 0.0f };
-	alignas(8)  glm::vec2 TexCoord = { 0.0f, 0.0f };
+  VkVertexInputBindingDescription bindingDescription = {};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(T);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-  static VkVertexInputBindingDescription
-  GetBindingDescription()
-  {
-    VkVertexInputBindingDescription bindingDescription = {};
-    bindingDescription.binding = 0;
-    bindingDescription.stride = sizeof(stVertex);
-    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  return bindingDescription;
+}
 
-    return bindingDescription;
-  }
+std::array<VkVertexInputAttributeDescription, 3>
+GetAttributeDescriptions()
+{
+  std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
 
-  static std::array<VkVertexInputAttributeDescription, 3>
-  GetAttributeDescriptions()
-  {
-    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
+  attributeDescriptions[0].binding = 0;
+  attributeDescriptions[0].location = 0;
+  attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[0].offset = offsetof(stVertex, Position);
 
-    attributeDescriptions[0].binding = 0;
-    attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[0].offset = offsetof(stVertex, Position);
+  attributeDescriptions[1].binding = 0;
+  attributeDescriptions[1].location = 1;
+  attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[1].offset = offsetof(stVertex, Normal);
 
-    attributeDescriptions[1].binding = 0;
-    attributeDescriptions[1].location = 1;
-    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[1].offset = offsetof(stVertex, Normal);
+  attributeDescriptions[2].binding = 0;
+  attributeDescriptions[2].location = 2;
+  attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+  attributeDescriptions[2].offset = offsetof(stVertex, TexCoord);
 
-    attributeDescriptions[2].binding = 0;
-    attributeDescriptions[2].location = 2;
-    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attributeDescriptions[2].offset = offsetof(stVertex, TexCoord);
-
-    return attributeDescriptions;
-  }
-};
+  return attributeDescriptions;
+}
 
 enum
 enQueueType : int
@@ -117,18 +110,41 @@ stPipeline
 };
 
 struct
-stUniformBufferObject
+stMaterial
 {
-  alignas(16) glm::mat4 Model;
-  alignas(16) glm::mat4 View;
-  alignas(16) glm::mat4 Proj;
+	VkPipeline Pipeline;
+	VkPipelineLayout PipelineLayout;
+};
+
+#define MAX_MATERIAL_COUNT 10
+stMaterial Materials[MAX_MATERIAL_COUNT];
+uint32_t MaterialsCount = 0;
+
+stMaterial* create_material(
+  VkPipeline pipeline,
+  VkPipelineLayout layout)
+{
+  stMaterial mat;
+  mat.Pipeline = pipeline;
+  mat.PipelineLayout = layout;
+  Materials[MaterialsCount++] = mat;
+  return &Materials[MaterialsCount];
+}
+
+struct
+stRenderObject
+{
+  stMesh* Mesh;
+  stMaterial* Material;
+  glm::mat4* Transform;
 };
 
 struct
 stMeshPushConstants
 {
-  glm::vec4 Data;
-  glm::mat4 Model;
+  alignas(16) glm::mat4 Model;
+  alignas(16) glm::mat4 View;
+  alignas(16) glm::mat4 Proj;
 };
 
 struct
@@ -154,13 +170,6 @@ stTexture
   uint32_t MipLevels;
 };
 
-struct
-stMesh
-{
-  std::vector<stVertex> Vertices;
-  std::vector<uint32_t> Indices;
-};
-
 VkSurfaceKHR
 CreateSurface(
   VkInstance instance,
@@ -178,12 +187,39 @@ ChooseSwapExtent(
 
 #define MAX_PHYSICAL_DEVICE_COUNT 16
 #define MAX_SWAPCHAIN_IMAGE_COUNT 16
+#define MAX_RENDER_OBJECT_COUNT 128
 
 struct
 stRenderer
 {
   void
   Init(const stWindow& window);
+
+  void
+  AddRenderingObjectsFromEntities(
+    stEntity** entities,
+    uint32_t entitiesCount,
+    bool defaultMaterial = true)
+  {
+    RenderObjectCount = entitiesCount;
+    for (size_t i = 0; i < entitiesCount; i++)
+    {
+      RenderObjects[i] = { &entities[i]->Mesh, defaultMaterial ? &Materials[0] : nullptr, entities[i]->Transform.Tramsform };
+    }
+
+    // TODO: cached and loaded from every entity
+    { // load meshes to GPU
+      stMesh& mesh = entities[0]->Mesh;
+
+      { // CREATE VERTEX BUFFER
+        VertexBuffer = init::create_vertex_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+      }
+
+      { // CREATE INDEX BUFFER
+        IndexBuffer = init::create_index_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+      }
+    }
+  }
 
   void
   CreateSwapchain();
@@ -195,7 +231,38 @@ stRenderer
   Term();
 
   void
-  Render(stCamera& camera, double delta = 0.0f);
+  Render(double delta = 0.0f);
+
+  void
+  draw_objects(
+    VkCommandBuffer cmd,
+    VkDescriptorSet descriptorSet,
+    stRenderObject* first,
+    uint32_t count)
+  {
+    for (size_t i = 0; i < count; i++)
+    {
+      stRenderObject& object = first[i];
+
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Pipeline);
+      
+      VkBuffer vertexBuffers[] = { VertexBuffer.Buffer };
+      VkDeviceSize offsets[] = { 0 };
+      vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+      vkCmdBindIndexBuffer(cmd, IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
+      
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Layout, 0, 1, &descriptorSet, 0, nullptr);
+      
+      stMeshPushConstants constants = {};
+      constants.Model = *object.Transform;
+      constants.View = Camera->get_view_matrix();
+      constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
+      
+      vkCmdPushConstants(cmd, GraphicsPipeline.Layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
+
+      vkCmdDrawIndexed(cmd, (uint32_t) object.Mesh->Indices.size(), 1, 0, 0, 0);
+    }
+  }
 
   VkInstance Instance = VK_NULL_HANDLE;
   VkSurfaceKHR Surface = VK_NULL_HANDLE;
@@ -214,7 +281,6 @@ stRenderer
   stPipeline GraphicsPipeline = {};
 
   stBuffer VertexBuffer = {};
-
   stBuffer IndexBuffer = {};
 
   stBuffer UniformBuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
@@ -244,6 +310,11 @@ stRenderer
 
   stDeletionQueue Deletion;
   stDeletionQueue SwapchainDeletion;
+
+  stCamera* Camera;
+
+  uint32_t RenderObjectCount = 0;
+  stRenderObject RenderObjects[MAX_RENDER_OBJECT_COUNT];
 };
 
 void
@@ -286,7 +357,7 @@ stRenderer::Init(
     InFlightFence[i] = init::create_fence(Device, &Deletion);
   }
 
-  CommandPool = init::create_command_pool(Device, 0, &Deletion);
+  CommandPool = init::create_command_pool(Device, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, &Deletion);
 
   TexImage = init::create_texture(Device, CommandPool, "./data/models/cube/default.png", &Deletion);
 
@@ -321,134 +392,17 @@ stRenderer::CreateSwapchain()
 
   GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
 
-  stMesh mesh;
+  stMaterial* mat = create_material(GraphicsPipeline.Pipeline, GraphicsPipeline.Layout);
 
-  // init::load_mesh(mesh, "./data/models/pirate/pirate.obj");
-  init::load_mesh(mesh, "./data/models/cube/cube.obj");
-  // init::load_mesh(mesh, "./data/models/the_nobel/the_nobel.obj");
-  // init::load_mesh(mesh, "./data/models/bunny/bunny.obj");
-
-  { // CREATE VERTEX BUFFER
-    VkDeviceSize bufferSize = sizeof(mesh.Vertices[0]) * mesh.Vertices.size();
-
-    stBuffer stagingBuffer = {};
-    init::create_buffer(
-      Device,
-      bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, nullptr
-    );
-
-    void* data;
-    vkMapMemory(Device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
-      memcpy(data, mesh.Vertices.data(), (size_t) bufferSize);
-    vkUnmapMemory(Device.LogicalDevice, stagingBuffer.Memory);
-
-    init::create_buffer(
-      Device,
-      bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VertexBuffer,
-      &SwapchainDeletion
-    );
-
-    init::copy_buffer(Device, stagingBuffer.Buffer, VertexBuffer.Buffer, bufferSize, CommandPool);
-
-    vkDestroyBuffer(Device.LogicalDevice, stagingBuffer.Buffer, nullptr);
-    vkFreeMemory(Device.LogicalDevice, stagingBuffer.Memory, nullptr);
-  }
-
-  { // CREATE INDEX BUFFER
-    VkDeviceSize bufferSize = sizeof(mesh.Indices[0]) * mesh.Indices.size();
-
-    stBuffer stagingBuffer = {};
-    init::create_buffer(
-      Device,
-      bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, nullptr
-    );
-
-    void* data;
-    vkMapMemory(Device.LogicalDevice, stagingBuffer.Memory, 0, bufferSize, 0, &data);
-      memcpy(data, mesh.Indices.data(), (size_t) bufferSize);
-    vkUnmapMemory(Device.LogicalDevice, stagingBuffer.Memory);
-
-    init::create_buffer(
-      Device,
-      bufferSize,
-      VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, IndexBuffer, &SwapchainDeletion
-    );
-
-    init::copy_buffer(Device, stagingBuffer.Buffer, IndexBuffer.Buffer, bufferSize, CommandPool);
-
-    vkDestroyBuffer(Device.LogicalDevice, stagingBuffer.Buffer, nullptr);
-    vkFreeMemory(Device.LogicalDevice, stagingBuffer.Memory, nullptr);
-  }
-
-  //init::create_uniform_buffer(Device, UniformBuffers, SwapchainImageCount);
-
-  VkDeviceSize bufferSize = sizeof(stUniformBufferObject);
-
-  for (size_t i = 0; i < SwapchainImageCount; i++)
-  {
-    init::create_buffer(
-      Device,
-      bufferSize,
-      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-      UniformBuffers[i], &SwapchainDeletion
-    );
-  }
-
-  std::array<VkDescriptorPoolSize, 2> poolSizes = {};
-  poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  std::array<VkDescriptorPoolSize, 1> poolSizes = {};
+  poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   poolSizes[0].descriptorCount = SwapchainImageCount;
-  poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSizes[1].descriptorCount = SwapchainImageCount;
 
   DescriptorPool = init::create_descriptor_pools(Device, poolSizes.data(), (uint32_t)poolSizes.size(), SwapchainImageCount, &SwapchainDeletion);
 
   init::create_descriptor_sets(Device, GraphicsPipeline, DescriptorPool, DescriptorSets, UniformBuffers, SwapchainImageCount, TexImage);
 
-  init::create_command_buffers(Device, CommandPool,
-    {
-      [=](VkCommandBuffer cb, uint32_t index)
-      {
-        VkClearValue clearValues[2] =
-        {
-          {{ 0.3f, 0.3f, 0.3f, 1.0f }},
-          { 1.0f, 0 }
-        };
-
-        VkRenderPassBeginInfo renderPassBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
-        renderPassBeginInfo.renderPass = ForwardRenderPass;
-        renderPassBeginInfo.framebuffer = Framebuffers[index];
-        renderPassBeginInfo.renderArea.offset = { 0, 0 };
-        renderPassBeginInfo.renderArea.extent = SwapchainExtent;
-        renderPassBeginInfo.clearValueCount = ArrayCount(clearValues);
-        renderPassBeginInfo.pClearValues = clearValues;
-
-        vkCmdBeginRenderPass(cb, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-        // draw call
-        {
-          vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Pipeline);
-
-          VkBuffer vertexBuffers[] = { VertexBuffer.Buffer };
-          VkDeviceSize offsets[] = { 0 };
-          vkCmdBindVertexBuffers(cb, 0, 1, vertexBuffers, offsets);
-          vkCmdBindIndexBuffer(cb, IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
-
-          vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Layout, 0, 1, &DescriptorSets[index], 0, nullptr);
-          vkCmdDrawIndexed(cb, (uint32_t) mesh.Indices.size(), 1, 0, 0, 0);
-        }
-
-        vkCmdEndRenderPass(cb);
-      }
-    }, CommandBuffers, SwapchainImageCount, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 0, &SwapchainDeletion
-  );
+  init::create_command_buffers(Device, CommandPool, CommandBuffers, SwapchainImageCount, VK_COMMAND_BUFFER_LEVEL_PRIMARY, &SwapchainDeletion);
 }
 
 void
@@ -473,8 +427,30 @@ stRenderer::Term()
   Deletion.Flush();
 }
 
+void IRender()
+{
+  // stDeviceContext* ctx = device->createCommandBuffer();
+
+  // stPassClear passClear;
+  // passClear.Mask = Framebuffer::Mask_Color0;
+
+  // ctx->BeginPass(fb, 0, Framebuffer::Mask_Color0, &passClear);
+
+  // ctx->BindProgram(Program.Get());
+
+  // ctx->BindBuffer(0, GlobalDataBuffer.Get());
+  // ctx->BindBufferData(1, &Params, sizeof(Params));
+  // ctx->BindTexture(0, LightMap, SamplerState::Filter_Linear);
+
+  // ctx->Draw(Geometry, Geometry::Primitive_Triangles, 0, Count);
+
+  // ctx->EndPass();
+
+  // device->CommitCommandBuffer(ctx);
+}
+
 void
-stRenderer::Render(stCamera& camera, double delta)
+stRenderer::Render(double delta)
 {
   vkWaitForFences(Device.LogicalDevice, 1, &InFlightFence[CurrentFrame], VK_TRUE, ~0ull);
 
@@ -493,20 +469,36 @@ stRenderer::Render(stCamera& camera, double delta)
 
   //
 
-  static float time = 0.0f;
-  time += (float) delta * 0.1f;
+  VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+  beginInfo.flags = 0;
+  beginInfo.pInheritanceInfo = nullptr;
 
-  stUniformBufferObject ubo = {};
-  ubo.Model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-  // ubo.Model *= glm::scale( ubo.Model, glm::vec3(0.5f) );
-  ubo.View = camera.get_view_matrix();
-  ubo.Proj = camera.get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
+  VK_CHECK(vkBeginCommandBuffer(CommandBuffers[imageIndex], &beginInfo));
 
-  void* data;
-  vkMapMemory(Device.LogicalDevice, UniformBuffers[imageIndex].Memory, 0, sizeof(ubo), 0, &data);
-    memcpy(data, &ubo, sizeof(ubo));
-  vkUnmapMemory(Device.LogicalDevice, UniformBuffers[imageIndex].Memory);
+  VkClearValue clearValues[2] =
+  {
+    {{ 0.1f, 0.1f, 0.1f, 1.0f }},
+    { 1.0f, 0 }
+  };
 
+  VkRenderPassBeginInfo renderPassBeginInfo = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+  renderPassBeginInfo.renderPass = ForwardRenderPass;
+  renderPassBeginInfo.framebuffer = Framebuffers[imageIndex];
+  renderPassBeginInfo.renderArea.offset = { 0, 0 };
+  renderPassBeginInfo.renderArea.extent = SwapchainExtent;
+  renderPassBeginInfo.clearValueCount = ArrayCount(clearValues);
+  renderPassBeginInfo.pClearValues = clearValues;
+
+  vkCmdBeginRenderPass(CommandBuffers[imageIndex], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+  {
+    draw_objects(CommandBuffers[imageIndex], DescriptorSets[imageIndex], RenderObjects, RenderObjectCount);
+  }
+
+  vkCmdEndRenderPass(CommandBuffers[imageIndex]);
+
+  VK_CHECK(vkEndCommandBuffer(CommandBuffers[imageIndex]));
+  
   //
 
   VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };

@@ -2,7 +2,7 @@
 struct
 stCamera
 {
-  glm::vec3 Position = { 0.0f, 0.0f, 0.0f };
+  glm::vec3 Position = { 0.0f, 1.0f, 4.0f };
   glm::vec3 Velocity = { 0.0f, 0.0f, 0.0f };
 
   glm::vec3 Forward = { 0.0f, 0.0f, 0.0f };
@@ -22,7 +22,7 @@ stCamera
   get_view_matrix();
 
   glm::mat4
-  get_projection_matrix(const glm::vec2& wondowSize, bool reverse = true);
+  get_projection_matrix(const glm::vec2& wondowSize, bool reverse = false);
 
   glm::mat4
   get_rotation_matrix();
@@ -31,19 +31,16 @@ stCamera
 void
 stCamera::update_camera(stInputState& input_state, double dt)
 {
-  if (input_state.GetKeyDown(KEY_TAB))
-  {
-    Locked = !Locked;
-  }
-
   const float cam_vel = 1.0f + Sprint * 0.01f;
 
   Forward = { 0, 0, cam_vel };
 	Right = { cam_vel, 0, 0 };
 	Up = { 0, cam_vel, 0 };
   
-  Yaw += input_state.RotationDelta.x * (float)dt;// * 10.0f;
-  Pitch += input_state.RotationDelta.y * (float)dt;// * 10.0f;
+  Yaw += input_state.RotationDelta.x * (float)dt * 10.0f;
+  Pitch += input_state.RotationDelta.y * (float)dt * 10.0f;
+
+  Pitch = glm::clamp(Pitch, -1.5f, 1.5f);
 
   glm::mat4 cam_rot = get_rotation_matrix();
 
