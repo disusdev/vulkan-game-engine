@@ -116,19 +116,34 @@ stMaterial
 	VkPipelineLayout PipelineLayout;
 };
 
+namespace material
+{
+
 #define MAX_MATERIAL_COUNT 10
 stMaterial Materials[MAX_MATERIAL_COUNT];
 uint32_t MaterialsCount = 0;
 
+std::unordered_map<std::string, stMaterial*> CachedMaterials;
+
 stMaterial* create_material(
   VkPipeline pipeline,
-  VkPipelineLayout layout)
+  VkPipelineLayout layout,
+  const char* name)
 {
   stMaterial mat;
   mat.Pipeline = pipeline;
   mat.PipelineLayout = layout;
-  Materials[MaterialsCount++] = mat;
-  return &Materials[MaterialsCount];
+  Materials[MaterialsCount] = mat;
+  CachedMaterials.insert( { name, &Materials[MaterialsCount] } );
+  return &Materials[MaterialsCount++];
+}
+
+stMaterial* get_material(
+  const char* name)
+{
+  return CachedMaterials[name];
+}
+
 }
 
 struct
@@ -199,24 +214,39 @@ stRenderer
   AddRenderingObjectsFromEntities(
     stEntity** entities,
     uint32_t entitiesCount,
-    bool defaultMaterial = true)
+    const char* materialName = "default")
   {
     RenderObjectCount = entitiesCount;
     for (size_t i = 0; i < entitiesCount; i++)
     {
-      RenderObjects[i] = { &entities[i]->Mesh, defaultMaterial ? &Materials[0] : nullptr, entities[i]->Transform.Tramsform };
+      RenderObjects[i] = { entities[i]->Mesh, material::get_material(materialName), entities[i]->Transform.Tramsform };
     }
 
     // TODO: cached and loaded from every entity
-    { // load meshes to GPU
-      stMesh& mesh = entities[0]->Mesh;
+    //{ // load meshes to GPU
+    //  stMesh& mesh = *entities[0]->Mesh;
 
-      { // CREATE VERTEX BUFFER
-        VertexBuffer = init::create_vertex_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
-      }
+    //  { // CREATE VERTEX BUFFER
+    //    VertexBuffer = init::create_vertex_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+    //  }
 
-      { // CREATE INDEX BUFFER
-        IndexBuffer = init::create_index_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+    //  { // CREATE INDEX BUFFER
+    //    IndexBuffer = init::create_index_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+    //  }
+    //}
+
+    {
+      for (size_t i = 0; i < mesh::MesheCounter; i++)
+      {
+        stMesh& mesh = mesh::Meshes[i];
+
+        { // CREATE VERTEX BUFFER
+          VertexBuffer = init::create_vertex_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+        }
+
+        { // CREATE INDEX BUFFER
+          IndexBuffer = init::create_index_buffer(Device, CommandPool, mesh, &SwapchainDeletion);
+        }
       }
     }
   }
@@ -244,21 +274,21 @@ stRenderer
     {
       stRenderObject& object = first[i];
 
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Pipeline);
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->Pipeline);
       
       VkBuffer vertexBuffers[] = { VertexBuffer.Buffer };
       VkDeviceSize offsets[] = { 0 };
       vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
       vkCmdBindIndexBuffer(cmd, IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
       
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, GraphicsPipeline.Layout, 0, 1, &descriptorSet, 0, nullptr);
+      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->PipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
       
       stMeshPushConstants constants = {};
       constants.Model = *object.Transform;
       constants.View = Camera->get_view_matrix();
       constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
       
-      vkCmdPushConstants(cmd, GraphicsPipeline.Layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
+      vkCmdPushConstants(cmd, object.Material->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
 
       vkCmdDrawIndexed(cmd, (uint32_t) object.Mesh->Indices.size(), 1, 0, 0, 0);
     }
@@ -392,7 +422,7 @@ stRenderer::CreateSwapchain()
 
   GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
 
-  stMaterial* mat = create_material(GraphicsPipeline.Pipeline, GraphicsPipeline.Layout);
+  stMaterial* mat = material::create_material(GraphicsPipeline.Pipeline, GraphicsPipeline.Layout, "default");
 
   std::array<VkDescriptorPoolSize, 1> poolSizes = {};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;

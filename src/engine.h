@@ -44,6 +44,8 @@ engine
     // "./data/models/bunny/bunny.obj"
     // "./data/models/cube/cube.obj"
 
+    mesh::load_mesh("./data/models/cube/cube.obj");
+
     stEntityBase Entity1 = enity::create_entity(EntitySystem, TransformSystem, glm::vec3(1.0f,0.0f,0.0f), "./data/models/cube/cube.obj");
     stEntityBase Entity2 = enity::create_entity(EntitySystem, TransformSystem, glm::vec3(-1.0f,0.0f,0.0f), "./data/models/cube/cube.obj");
 

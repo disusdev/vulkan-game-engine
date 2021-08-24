@@ -18,7 +18,7 @@ stEntity
 
   stEntity() {}
 
-  stMesh Mesh;
+  stMesh* Mesh;
   stTransform Transform;
   stEntity* Childrens[MAX_ENTITY_CILDRENS];
   stEntity* Parent = nullptr;
@@ -49,7 +49,8 @@ create_entity(stEntitySystem& entitySystem, stTransformSystem& transformSystem, 
 
   if (meshPath)
   {
-    base.Entity->Mesh.LoadMesh(meshPath);
+    // base.Entity->Mesh.LoadMesh(meshPath);
+    base.Entity->Mesh = mesh::get_mesh(meshPath);
   } 
 
   return base;
