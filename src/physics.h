@@ -25,7 +25,7 @@ stPhysicsSystem
   // control transforms and entity relates with each other
 
   // what we need: TransmormSystem
-  glm::vec3 Velocities[MAX_ENTITIES_COUNT];
+  std::unordered_map<uint64_t, glm::vec3> Velocities;
   
   stTransformSystem* TransformSystem;
 };

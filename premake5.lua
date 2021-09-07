@@ -1,7 +1,7 @@
 -- premake5.lua
 
 workspace "simple-game-engine"
-    configurations { "Debug" }
+    configurations { "Debug", "Release" }
     platforms { "Win64" }
 
 project "resources"

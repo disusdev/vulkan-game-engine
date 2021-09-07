@@ -56,6 +56,7 @@ UpdateInput();
 
 #include "input.h"
 #include "camera.h"
+#include "sun.h"
 #include "engine.h"
 
 engine g_Engine = {};
@@ -246,11 +247,17 @@ sys::UpdateInput()
       g_Engine.Input.KeysHold = GetAsyncKeyState(VK_SPACE) & 0x8000
         ? g_Engine.Input.KeysHold | enKeyAction::KEY_UP
         : g_Engine.Input.KeysHold;
-      g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LSHIFT) & 0x8000
+      g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LCONTROL) & 0x8000
         ? g_Engine.Input.KeysHold | enKeyAction::KEY_DOWN
         : g_Engine.Input.KeysHold;
       g_Engine.Input.KeysHold = GetAsyncKeyState(VK_TAB) & 0x8000
         ? g_Engine.Input.KeysHold | enKeyAction::KEY_TAB
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState(VK_LSHIFT) & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_SPEED
+        : g_Engine.Input.KeysHold;
+      g_Engine.Input.KeysHold = GetAsyncKeyState('L') & 0x8000
+        ? g_Engine.Input.KeysHold | enKeyAction::KEY_LOAD
         : g_Engine.Input.KeysHold;
 
       if (g_Engine.Camera.Locked)

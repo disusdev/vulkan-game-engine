@@ -849,12 +849,12 @@ create_pipeline(
   dynamicState.pDynamicStates = dynamicStates;
 
   // ubo
-  VkDescriptorSetLayoutBinding uboLayoutBinding = {};
-  uboLayoutBinding.binding = 0;
-  uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  uboLayoutBinding.descriptorCount = 1;
-  uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-  uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+  //VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+  //uboLayoutBinding.binding = 0;
+  //uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  //uboLayoutBinding.descriptorCount = 1;
+  //uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  //uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 
   // sampler
   VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
@@ -864,7 +864,7 @@ create_pipeline(
   samplerLayoutBinding.pImmutableSamplers = nullptr;
   samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   
-  std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
+  std::array<VkDescriptorSetLayoutBinding, 1> bindings = { /*uboLayoutBinding,*/ samplerLayoutBinding };
   VkDescriptorSetLayoutCreateInfo layoutInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
   layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
   layoutInfo.pBindings = bindings.data();
@@ -1074,7 +1074,7 @@ create_descriptor_pools(
   VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
   poolInfo.poolSizeCount = poolCount;
   poolInfo.pPoolSizes = poolSizes;
-  poolInfo.maxSets = swapchainImageCount;
+  poolInfo.maxSets = swapchainImageCount * MAX_TEXTURE_COUNT;
 
   VkDescriptorPool descriptorPool;
 
@@ -1089,12 +1089,54 @@ create_descriptor_pools(
 }
 
 void
+update_descriptor_set(
+  const stDevice& device,
+  VkDescriptorSet descriptorSet,
+  const stTexture& texture//,
+  //uint32_t swapChainImageCount
+  )
+{
+  //for (size_t i = 0; i < swapChainImageCount; i++)
+  {
+    //VkDescriptorBufferInfo bufferInfo{};
+    //bufferInfo.buffer = uniformBuffers[i].Buffer;
+    //bufferInfo.offset = 0;
+    //bufferInfo.range = sizeof(stUniformBufferObject);
+
+    VkDescriptorImageInfo imageInfo{};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = texture.Image.View;
+    imageInfo.sampler = texture.Sampler;
+
+    std::array<VkWriteDescriptorSet, 1> descriptorWrites = {};
+
+    //descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    //descriptorWrites[0].dstSet = descriptorSets[i];
+    //descriptorWrites[0].dstBinding = 0;
+    //descriptorWrites[0].dstArrayElement = 0;
+    //descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    //descriptorWrites[0].descriptorCount = 1;
+    //descriptorWrites[0].pBufferInfo = &bufferInfo;
+    
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSet;//s[i];
+    descriptorWrites[0].dstBinding = 1;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device.LogicalDevice, (uint32_t)descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
+  }
+}
+
+void
 create_descriptor_sets(
   const stDevice& device,
   const stPipeline& pipeline,
   VkDescriptorPool descriptorPool,
   VkDescriptorSet* descriptorSets,
-  stBuffer* uniformBuffers,
+  // stBuffer* uniformBuffers,
   uint32_t swapChainImageCount,
   const stTexture& texture
   )
@@ -1107,7 +1149,7 @@ create_descriptor_sets(
   allocInfo.descriptorSetCount = swapChainImageCount;
   allocInfo.pSetLayouts = layouts.data();
 
-  vkAllocateDescriptorSets(device.LogicalDevice, &allocInfo, descriptorSets);
+  VK_CHECK(vkAllocateDescriptorSets(device.LogicalDevice, &allocInfo, descriptorSets));
 
   for (size_t i = 0; i < swapChainImageCount; i++)
   {
@@ -1539,6 +1581,24 @@ create_texture_sampler(
   return textureSampler;
 }
 
+uint32_t TextureCounter = 0;
+stTexture Textures[MAX_TEXTURE_COUNT];
+std::unordered_map<std::string, stTexture*> CachedTextures;
+
+stTexture*
+get_texture(
+  uint32_t index)
+{
+  return &Textures[index];
+}
+
+stTexture*
+get_texture(
+  std::string key)
+{
+  return CachedTextures[key];
+}
+
 stTexture
 create_texture(
   const stDevice& device,
@@ -1546,23 +1606,29 @@ create_texture(
   const char* path,
   stDeletionQueue* deletionQueue)
 {
-  stTexture texture = create_texture_image(device, commandPool, path);
+  stTexture* texture = &Textures[TextureCounter];
 
-  create_texture_image_view(device, texture);
+  *texture = create_texture_image(device, commandPool, path);
 
-  texture.Sampler = create_texture_sampler(device, texture.MipLevels);
+  texture->DescriptorSetIndex = TextureCounter;
+  CachedTextures[path] = texture;
+  TextureCounter++;
+
+  create_texture_image_view(device, *texture);
+
+  texture->Sampler = create_texture_sampler(device, texture->MipLevels);
 
   if (deletionQueue)
   {
     deletionQueue->PushFunction([=]{
-      vkDestroySampler(device.LogicalDevice, texture.Sampler, nullptr);
-      vkDestroyImageView(device.LogicalDevice, texture.Image.View, nullptr);
-      vkDestroyImage(device.LogicalDevice, texture.Image.Src, nullptr);
-      vkFreeMemory(device.LogicalDevice, texture.Image.Memory, nullptr);
+      vkDestroySampler(device.LogicalDevice, texture->Sampler, nullptr);
+      vkDestroyImageView(device.LogicalDevice, texture->Image.View, nullptr);
+      vkDestroyImage(device.LogicalDevice, texture->Image.Src, nullptr);
+      vkFreeMemory(device.LogicalDevice, texture->Image.Memory, nullptr);
     });
   }
 
-  return texture;
+  return *texture;
 }
 
 stImage

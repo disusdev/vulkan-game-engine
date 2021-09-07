@@ -18,7 +18,8 @@ stEntity
 
   stEntity() {}
 
-  stMesh* Mesh;
+  stMesh* Mesh[MAX_ENTITY_MESH_COUNT];
+  uint32_t MeshCount = 0;
   stTransform Transform;
   stEntity* Childrens[MAX_ENTITY_CILDRENS];
   stEntity* Parent = nullptr;
@@ -27,14 +28,14 @@ stEntity
 struct
 stEntitySystem
 {
-  stEntity Entities[MAX_ENTITIES_COUNT];
+  std::unordered_map<uint64_t, stEntity> Entities;
 };
 
 namespace enity
 {
 
 stEntityBase
-create_entity(stEntitySystem& entitySystem, stTransformSystem& transformSystem, const glm::vec3& startPos, const char* meshPath = nullptr)
+create_entity(stEntitySystem& entitySystem, stTransformSystem& transformSystem, const glm::vec3& startPos, const char* meshPath = nullptr, int index = -1)
 {
   static int idCounter = 0;
 
@@ -49,9 +50,18 @@ create_entity(stEntitySystem& entitySystem, stTransformSystem& transformSystem, 
 
   if (meshPath)
   {
-    // base.Entity->Mesh.LoadMesh(meshPath);
-    base.Entity->Mesh = mesh::get_mesh(meshPath);
-  } 
+    std::vector<stMesh*> meshes = mesh::get_meshes(meshPath);
+    for (size_t i = 0; i < meshes.size(); i++)
+    {
+      base.Entity->Mesh[i] = meshes[i];
+      base.Entity->MeshCount++;
+    }
+  }
+  else
+  {
+    base.Entity->Mesh[0] = mesh::get_mesh(index);
+    base.Entity->MeshCount++;
+  }
 
   return base;
 }

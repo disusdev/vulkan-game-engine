@@ -10,8 +10,8 @@ struct
 stTransformSystem
 {
   uint32_t TransformCount = 0;
-  glm::mat4 Tramsforms[MAX_ENTITIES_COUNT];
-  glm::vec3 Positions[MAX_ENTITIES_COUNT];
+  std::unordered_map<uint64_t, glm::mat4> Tramsforms;
+  std::unordered_map<uint64_t, glm::vec3> Positions;
 
   void
   GetTransform(glm::mat4* transform)

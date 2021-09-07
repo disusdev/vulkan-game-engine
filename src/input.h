@@ -12,7 +12,9 @@ enKeyAction : int
   KEY_Q = 1 << 6,
   KEY_E = 1 << 7,
   KEY_EXIT = 1 << 8,
-  KEY_TAB = 1 << 9
+  KEY_TAB = 1 << 9,
+  KEY_SPEED = 1 << 10,
+  KEY_LOAD = 1 << 11,
 };
 
 struct

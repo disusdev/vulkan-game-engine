@@ -12,7 +12,7 @@ stCamera
   float Pitch = 0.0f;
   float Yaw = 0.0f;
 
-  bool Sprint = false;
+  // bool Sprint = false;
   bool Locked = false;
 
   void
@@ -31,14 +31,14 @@ stCamera
 void
 stCamera::update_camera(stInputState& input_state, double dt)
 {
-  const float cam_vel = 1.0f + Sprint * 0.01f;
+  const float cam_vel = 10.0f + input_state.GetKey(KEY_SPEED) * 10.0f;
 
   Forward = { 0, 0, cam_vel };
 	Right = { cam_vel, 0, 0 };
 	Up = { 0, cam_vel, 0 };
   
-  Yaw += input_state.RotationDelta.x * (float)dt * 10.0f;
-  Pitch += input_state.RotationDelta.y * (float)dt * 10.0f;
+  Yaw += input_state.RotationDelta.x * (float)dt;
+  Pitch += input_state.RotationDelta.y * (float)dt;
 
   Pitch = glm::clamp(Pitch, -1.5f, 1.5f);
 
