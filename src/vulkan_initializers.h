@@ -1706,7 +1706,6 @@ create_texture(
   {
     deletionQueue->PushFunction([=]{
       vkDestroySampler(device.LogicalDevice, texture->Sampler, nullptr);
-      //vkDestroyImageView(device.LogicalDevice, texture->Image.View, nullptr);
       vkDestroyImage(device.LogicalDevice, texture->Image.Src, nullptr);
       vkFreeMemory(device.LogicalDevice, texture->Image.Memory, nullptr);
     });
@@ -1751,7 +1750,6 @@ create_depth_resources(
 
   if (deletionQueue)
   deletionQueue->PushFunction([=]{
-    // vkDestroyImageView(device.LogicalDevice, depthImage.View, nullptr);
     vkDestroyImage(device.LogicalDevice, depthImage.Src, nullptr);
     vkFreeMemory(device.LogicalDevice, depthImage.Memory, nullptr);
   });
