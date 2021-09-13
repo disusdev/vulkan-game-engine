@@ -246,7 +246,8 @@ create_image_view(
   stImage& image,
   VkFormat format,
   VkImageAspectFlags aspectFlags,
-  uint32_t mipLevels)
+  uint32_t mipLevels,
+  stDeletionQueue* deleteionQueue = nullptr)
 {
   VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
   viewInfo.image = image.Src;
@@ -264,6 +265,11 @@ create_image_view(
   // viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
 
   VK_CHECK(vkCreateImageView(device.LogicalDevice, &viewInfo, nullptr, &image.View));
+
+  if (deleteionQueue)
+  deleteionQueue->PushFunction([=]{
+    vkDestroyImageView(device.LogicalDevice, image.View, nullptr);
+  });
 }
 
 VkSwapchainKHR
@@ -343,7 +349,7 @@ create_swapchain(
   for (uint32_t i = 0; i < swapchainImageCount; i++)
   {
     swapchainImages[i].Src = images[i];
-    create_image_view(device, swapchainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    create_image_view(device, swapchainImages[i], swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1, deleteionQueue);
   }
 
   if (deleteionQueue)
@@ -1607,14 +1613,6 @@ create_texture_image(
   return texture;
 }
 
-void
-create_texture_image_view(
-  const stDevice& device,
-  stTexture& texture)
-{
-  create_image_view(device, texture.Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, texture.MipLevels);
-}
-
 VkSampler
 create_sampler(
   const stDevice& device,
@@ -1700,7 +1698,7 @@ create_texture(
   CachedTextures[path] = texture;
   TextureCounter++;
 
-  create_texture_image_view(device, *texture);
+  create_image_view(device, texture->Image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, texture->MipLevels, deletionQueue);
 
   texture->Sampler = create_texture_sampler(device, texture->MipLevels);
 
@@ -1708,7 +1706,7 @@ create_texture(
   {
     deletionQueue->PushFunction([=]{
       vkDestroySampler(device.LogicalDevice, texture->Sampler, nullptr);
-      vkDestroyImageView(device.LogicalDevice, texture->Image.View, nullptr);
+      //vkDestroyImageView(device.LogicalDevice, texture->Image.View, nullptr);
       vkDestroyImage(device.LogicalDevice, texture->Image.Src, nullptr);
       vkFreeMemory(device.LogicalDevice, texture->Image.Memory, nullptr);
     });
@@ -1739,7 +1737,7 @@ create_depth_resources(
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
   );
 
-  create_image_view(device, depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+  create_image_view(device, depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, deletionQueue);
 
   transition_image_layout(
     device,
@@ -1753,7 +1751,7 @@ create_depth_resources(
 
   if (deletionQueue)
   deletionQueue->PushFunction([=]{
-    vkDestroyImageView(device.LogicalDevice, depthImage.View, nullptr);
+    // vkDestroyImageView(device.LogicalDevice, depthImage.View, nullptr);
     vkDestroyImage(device.LogicalDevice, depthImage.Src, nullptr);
     vkFreeMemory(device.LogicalDevice, depthImage.Memory, nullptr);
   });
