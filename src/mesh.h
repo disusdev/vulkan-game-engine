@@ -109,6 +109,8 @@ namespace mesh
 
 std::unordered_map<std::string, stMesh*> CachedMeshes;
 stMesh Meshes[MAX_MESH_COUNT];
+// stMesh *Meshes = (stMesh*) calloc(MAX_MESH_COUNT, sizeof(stMesh));
+
 uint32_t MesheCounter = 0;
 
 bool load_gltf_mesh(const char* path, int& startIndex, int& meshCount)

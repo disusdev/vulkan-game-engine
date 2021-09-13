@@ -172,7 +172,7 @@ stMeshPushConstants
   alignas(16) glm::mat4 Model;
   alignas(16) glm::mat4 View;
   alignas(16) glm::mat4 Proj;
-  alignas(16) glm::vec3 DirectionalLight;
+  // alignas(16) glm::vec3 DirectionalLight;
 };
 
 struct
@@ -226,58 +226,8 @@ stRenderer
   void
   AddRenderingObjectsFromEntities(
     stScene& scene,
-    const char* materialName = "default")
-  {
-    
-    for (size_t i = 0; i < scene.Entities.size(); i++)
-    {
-      for (size_t j = 0; j < scene.Entities[i].Entity->MeshCount; j++)
-      {
-        *scene.Entities[i].Entity->Transform.Tramsform *= scene.Entities[i].Entity->Mesh[j]->RootMatrix;
+    const char* materialName = "default");
 
-        RenderObjects.push_back({ scene.Entities[i].Entity->Mesh[j], material::get_material(materialName), scene.Entities[i].Entity->Transform.Tramsform });
-        // RenderObjects[RenderObjectCount] = { base_entities[i].Entity->Mesh[j], material::get_material(materialName), base_entities[i].Entity->Transform.Tramsform };
-
-        RenderObjectCount += 1;
-      }
-    }
-
-    {
-      for (size_t i = 0; i < mesh::MesheCounter; i++)
-      {
-        { // CREATE VERTEX BUFFER
-          RenderMeshes[i].VertexBuffer = init::create_vertex_buffer(Device, CommandPool, mesh::Meshes[i], &Deletion);
-        }
-
-        { // CREATE INDEX BUFFER
-          RenderMeshes[i].IndexBuffer = init::create_index_buffer(Device, CommandPool, mesh::Meshes[i], &Deletion);
-        }
-
-        std::string load_texture = mesh::Meshes[i].TexturePath.empty()
-          ? "./data/models/cube/default.png"
-          : mesh::Meshes[i].TexturePath;
-
-        stTexture* texture = init::get_texture(load_texture);
-
-        if (texture == nullptr)
-        {
-          RenderMeshes[i].TexImage = init::create_texture(Device, CommandPool, load_texture.c_str(), &Deletion);
-
-          for (size_t i = 0; i < init::TextureCounter; i++)
-          {
-            for (size_t j = 0; j < SwapchainImageCount; j++)
-            {
-              init::update_descriptor_set(Device, DescriptorSets1[i][j], init::Textures[i]);
-            }
-          }
-        }
-        else
-          RenderMeshes[i].TexImage = *texture;
-
-        RenderMeshesCache.insert({&mesh::Meshes[i], &RenderMeshes[i]});
-      }
-    }
-  }
 
   void
   CreateSwapchain();
@@ -292,45 +242,13 @@ stRenderer
   Render(double delta = 0.0f);
 
   void
-  draw_objects(
+  DrawObjects(
     VkCommandBuffer cmd,
     uint32_t targetIndex,
     VkDescriptorSet descriptorSets[MAX_TEXTURE_COUNT][MAX_SWAPCHAIN_IMAGE_COUNT],
     uint32_t descriptorSetCount,
     stRenderObject* first,
-    uint32_t count)
-  {
-    for (size_t i = 0; i < count; i++)
-    {
-      stRenderObject& object = first[i];
-      stRenderMeshData* renderData = RenderMeshesCache[object.Mesh];
-
-      // TODO: optimization: same objects material & position draw without new bindings,
-      //       you need to organize rendering objects before rendering
-      {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->Pipeline);
-
-        VkBuffer vertexBuffers[] = { renderData->VertexBuffer.Buffer };
-        VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
-        vkCmdBindIndexBuffer(cmd, renderData->IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
-
-        {
-          vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->PipelineLayout, 0, 1, &descriptorSets[renderData->TexImage.DescriptorSetIndex][targetIndex], 0, nullptr);
-        }
-        
-        stMeshPushConstants constants = {};
-        constants.Model = *object.Transform;
-        constants.View = Camera->get_view_matrix();
-        constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
-        constants.DirectionalLight = Sun->LightDirection;
-        
-        vkCmdPushConstants(cmd, object.Material->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
-      }
-
-      vkCmdDrawIndexed(cmd, (uint32_t) object.Mesh->Indices.size(), 1, 0, 0, 0);
-    }
-  }
+    uint32_t count);
 
   VkInstance Instance = VK_NULL_HANDLE;
   VkSurfaceKHR Surface = VK_NULL_HANDLE;
@@ -346,6 +264,7 @@ stRenderer
   VkCommandBuffer CommandBuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
 
   VkRenderPass ForwardRenderPass = VK_NULL_HANDLE;
+
   stPipeline GraphicsPipeline = {};
 
   struct
@@ -357,6 +276,8 @@ stRenderer
   };
 
   stRenderMeshData RenderMeshes[MAX_MESH_COUNT];
+  //stRenderMeshData *RenderMeshes = (stRenderMeshData*) calloc(MAX_MESH_COUNT, sizeof(stRenderMeshData));
+
   std::unordered_map<stMesh*, stRenderMeshData*> RenderMeshesCache;
 
   VkDescriptorPool ImageDescriptorPool = VK_NULL_HANDLE;
@@ -443,6 +364,62 @@ stRenderer::Init(
 }
 
 void
+stRenderer::AddRenderingObjectsFromEntities(
+  stScene& scene,
+  const char* materialName /*= "default"*/)
+{
+  
+  for (size_t i = 0; i < scene.Entities.size(); i++)
+  {
+    for (size_t j = 0; j < scene.Entities[i].Entity->MeshCount; j++)
+    {
+      *scene.Entities[i].Entity->Transform.Tramsform *= scene.Entities[i].Entity->Mesh[j]->RootMatrix;
+
+      RenderObjects.push_back({ scene.Entities[i].Entity->Mesh[j], material::get_material(materialName), scene.Entities[i].Entity->Transform.Tramsform });
+      // RenderObjects[RenderObjectCount] = { base_entities[i].Entity->Mesh[j], material::get_material(materialName), base_entities[i].Entity->Transform.Tramsform };
+
+      RenderObjectCount += 1;
+    }
+  }
+
+  {
+    for (size_t i = 0; i < mesh::MesheCounter; i++)
+    {
+      { // CREATE VERTEX BUFFER
+        RenderMeshes[i].VertexBuffer = init::create_vertex_buffer(Device, CommandPool, mesh::Meshes[i], &Deletion);
+      }
+
+      { // CREATE INDEX BUFFER
+        RenderMeshes[i].IndexBuffer = init::create_index_buffer(Device, CommandPool, mesh::Meshes[i], &Deletion);
+      }
+
+      std::string load_texture = mesh::Meshes[i].TexturePath.empty()
+        ? "./data/models/cube/default.png"
+        : mesh::Meshes[i].TexturePath;
+
+      stTexture* texture = init::get_texture(load_texture);
+
+      if (texture == nullptr)
+      {
+        RenderMeshes[i].TexImage = init::create_texture(Device, CommandPool, load_texture.c_str(), &Deletion);
+
+        for (size_t i = 0; i < init::TextureCounter; i++)
+        {
+          for (size_t j = 0; j < SwapchainImageCount; j++)
+          {
+            init::update_descriptor_set(Device, DescriptorSets1[i][j], init::Textures[i]);
+          }
+        }
+      }
+      else
+        RenderMeshes[i].TexImage = *texture;
+
+      RenderMeshesCache.insert({&mesh::Meshes[i], &RenderMeshes[i]});
+    }
+  }
+}
+
+void
 stRenderer::CreateSwapchain()
 {
   Swapchain = init::create_swapchain(
@@ -465,7 +442,14 @@ stRenderer::CreateSwapchain()
 
   for (size_t i = 0; i < SwapchainImageCount; i++)
   {
-    Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, SwapchainImages[i].View, DepthImage.View, ColorImage.View, &SwapchainDeletion);
+    VkImageView attachments[3] = 
+    {
+      ColorImage.View,
+      DepthImage.View,
+      SwapchainImages[i].View
+    };
+
+    Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, attachments, 3, &SwapchainDeletion);
   }
 
   GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
@@ -595,7 +579,7 @@ stRenderer::Render(double delta)
   vkCmdBeginRenderPass(CommandBuffers[imageIndex], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
   {
-    draw_objects(CommandBuffers[imageIndex], imageIndex, DescriptorSets1, descriptorsCount, RenderObjects.data(), RenderObjectCount);
+    DrawObjects(CommandBuffers[imageIndex], imageIndex, DescriptorSets1, descriptorsCount, RenderObjects.data(), RenderObjectCount);
   }
 
   vkCmdEndRenderPass(CommandBuffers[imageIndex]);
@@ -626,4 +610,45 @@ stRenderer::Render(double delta)
   VK_CHECK(vkQueuePresentKHR(Device.Queues[QUEUE_TYPE_GRAPHICS].Queue, &presentInfo));
 
   CurrentFrame = (CurrentFrame + 1) % SwapchainImageCount;
+}
+
+void
+stRenderer::DrawObjects(
+  VkCommandBuffer cmd,
+  uint32_t targetIndex,
+  VkDescriptorSet descriptorSets[MAX_TEXTURE_COUNT][MAX_SWAPCHAIN_IMAGE_COUNT],
+  uint32_t descriptorSetCount,
+  stRenderObject* first,
+  uint32_t count)
+{
+  for (size_t i = 0; i < count; i++)
+  {
+    stRenderObject& object = first[i];
+    stRenderMeshData* renderData = RenderMeshesCache[object.Mesh];
+
+    // TODO: optimization: same objects material & position draw without new bindings,
+    //       you need to organize rendering objects before rendering
+    {
+      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->Pipeline);
+
+      VkBuffer vertexBuffers[] = { renderData->VertexBuffer.Buffer };
+      VkDeviceSize offsets[] = { 0 };
+      vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+      vkCmdBindIndexBuffer(cmd, renderData->IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
+
+      {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->PipelineLayout, 0, 1, &descriptorSets[renderData->TexImage.DescriptorSetIndex][targetIndex], 0, nullptr);
+      }
+      
+      stMeshPushConstants constants = {};
+      constants.Model = *object.Transform;
+      constants.View = Camera->get_view_matrix();
+      constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
+      // constants.DirectionalLight = Sun->LightDirection;
+      
+      vkCmdPushConstants(cmd, object.Material->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
+    }
+
+    vkCmdDrawIndexed(cmd, (uint32_t) object.Mesh->Indices.size(), 1, 0, 0, 0);
+  }
 }

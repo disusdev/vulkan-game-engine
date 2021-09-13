@@ -404,6 +404,71 @@ create_command_pool(
 }
 
 VkRenderPass
+create_depth_render_pass(
+  const stDevice& device,
+  VkFormat renderFormat,
+  stDeletionQueue* deletionQueue
+)
+{
+  VkRenderPass renderPass = VK_NULL_HANDLE;
+
+	VkAttachmentDescription attachmentDescription{};
+	attachmentDescription.format = renderFormat;
+	attachmentDescription.samples = VK_SAMPLE_COUNT_1_BIT;
+	attachmentDescription.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;							// Clear depth at beginning of the render pass
+	attachmentDescription.storeOp = VK_ATTACHMENT_STORE_OP_STORE;						// We will read from depth, so it's important to store the depth attachment results
+	attachmentDescription.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	attachmentDescription.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attachmentDescription.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;					// We don't care about initial layout of the attachment
+	attachmentDescription.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;// Attachment will be transitioned to shader read at render pass end
+
+	VkAttachmentReference depthReference = {};
+	depthReference.attachment = 0;
+	depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;			// Attachment will be used as depth/stencil during render pass
+
+	VkSubpassDescription subpass = {};
+	subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+	subpass.colorAttachmentCount = 0;													// No color attachments
+	subpass.pDepthStencilAttachment = &depthReference;									// Reference to our depth attachment
+
+	// Use subpass dependencies for layout transitions
+	std::array<VkSubpassDependency, 2> dependencies;
+
+	dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+	dependencies[0].dstSubpass = 0;
+	dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	dependencies[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+	dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	dependencies[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+	dependencies[1].srcSubpass = 0;
+	dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+	dependencies[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	dependencies[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+  VkRenderPassCreateInfo render_pass_info = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+	render_pass_info.attachmentCount = 1;
+	render_pass_info.pAttachments = &attachmentDescription;
+	render_pass_info.subpassCount = 1;
+	render_pass_info.pSubpasses = &subpass;
+	render_pass_info.dependencyCount = static_cast<uint32_t>(dependencies.size());
+	render_pass_info.pDependencies = dependencies.data();
+
+	VK_CHECK(vkCreateRenderPass(device.LogicalDevice, &render_pass_info, nullptr, &renderPass));
+
+  if (deletionQueue)
+  deletionQueue->PushFunction([=]{
+    vkDestroyRenderPass(device.LogicalDevice, renderPass, nullptr);
+  });
+
+  return renderPass;
+}
+
+VkRenderPass
 create_render_pass(
   const stDevice& device,
   VkFormat renderFormat,
@@ -497,26 +562,28 @@ create_framebuffer(
   const stDevice& device,
   VkRenderPass renderPass,
   VkExtent2D bufferSize,
-  VkImageView swapChainImageView,
-  VkImageView depthImageView,
-  VkImageView colorImageView,
+  VkImageView* attachments,
+  uint32_t attachmentCount,
+  //VkImageView swapChainImageView,
+  //VkImageView depthImageView,
+  //VkImageView colorImageView,
   stDeletionQueue* deletionQueue
   )
 {
   VkFramebuffer framebuffer = VK_NULL_HANDLE;
 
-  VkImageView attachments[3] = 
-  {
-    colorImageView,
-    depthImageView,
-    swapChainImageView
-  };
+  //VkImageView attachments[3] = 
+  //{
+  //  colorImageView,
+  //  depthImageView,
+  //  swapChainImageView
+  //};
 
   VkFramebufferCreateInfo createInfo = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
   createInfo.renderPass = renderPass;
   createInfo.width = bufferSize.width;
   createInfo.height = bufferSize.height;
-  createInfo.attachmentCount = ArrayCount(attachments);
+  createInfo.attachmentCount = attachmentCount;
   createInfo.pAttachments = attachments;
   createInfo.layers = 1;
 
@@ -525,7 +592,7 @@ create_framebuffer(
   if (deletionQueue)
   deletionQueue->PushFunction([=]{
     vkDestroyFramebuffer(device.LogicalDevice, framebuffer, nullptr);
-    vkDestroyImageView(device.LogicalDevice, swapChainImageView, nullptr);
+    // vkDestroyImageView(device.LogicalDevice, swapChainImageView, nullptr);
   });
 
   return framebuffer;
@@ -858,7 +925,7 @@ create_pipeline(
 
   // sampler
   VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
-  samplerLayoutBinding.binding = 1;
+  samplerLayoutBinding.binding = 0;
   samplerLayoutBinding.descriptorCount = 1;
   samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   samplerLayoutBinding.pImmutableSamplers = nullptr;
@@ -1120,7 +1187,7 @@ update_descriptor_set(
     
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSet;//s[i];
-    descriptorWrites[0].dstBinding = 1;
+    descriptorWrites[0].dstBinding = 0;
     descriptorWrites[0].dstArrayElement = 0;
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[0].descriptorCount = 1;
@@ -1175,7 +1242,7 @@ create_descriptor_sets(
     
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSets[i];
-    descriptorWrites[0].dstBinding = 1;
+    descriptorWrites[0].dstBinding = 0;
     descriptorWrites[0].dstArrayElement = 0;
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[0].descriptorCount = 1;
@@ -1549,25 +1616,30 @@ create_texture_image_view(
 }
 
 VkSampler
-create_texture_sampler(
+create_sampler(
   const stDevice& device,
+  VkFilter filter,
+  VkSamplerAddressMode addressMode,
+  VkBorderColor borderColor,
+
   uint32_t mipLevels)
 {
   VkSamplerCreateInfo samplerInfo{};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  samplerInfo.magFilter = VK_FILTER_LINEAR;
-  samplerInfo.minFilter = VK_FILTER_LINEAR;
 
-  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.magFilter = filter;
+  samplerInfo.minFilter = filter;
+
+  samplerInfo.addressModeU = addressMode;
+  samplerInfo.addressModeV = addressMode;
+  samplerInfo.addressModeW = addressMode;
 
   VkPhysicalDeviceProperties properties = {};
   vkGetPhysicalDeviceProperties(device.PhysicalDevice, &properties);
   samplerInfo.anisotropyEnable = VK_TRUE;
   samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
 
-  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.borderColor = borderColor;
   samplerInfo.unnormalizedCoordinates = VK_FALSE;
   samplerInfo.compareEnable = VK_FALSE;
   samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
@@ -1576,9 +1648,23 @@ create_texture_sampler(
   samplerInfo.minLod = 0.0f;
   samplerInfo.maxLod = (float) mipLevels;
 
-  VkSampler textureSampler;
-  VK_CHECK(vkCreateSampler(device.LogicalDevice, &samplerInfo, nullptr, &textureSampler));
-  return textureSampler;
+  VkSampler sampler;
+  VK_CHECK(vkCreateSampler(device.LogicalDevice, &samplerInfo, nullptr, &sampler));
+  return sampler;
+}
+
+VkSampler
+create_texture_sampler(
+  const stDevice& device,
+  uint32_t mipLevels)
+{
+  return create_sampler(
+    device,
+    VK_FILTER_LINEAR,
+    VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+    mipLevels
+  );
 }
 
 uint32_t TextureCounter = 0;

@@ -5,7 +5,7 @@ layout( push_constant ) uniform constants
   mat4 model;
   mat4 view;
   mat4 proj;
-  vec3 dirLight;
+  // vec3 dirLight;
 } PushConstants;
 
 layout(location = 0) in vec3 inPosition;
@@ -25,12 +25,12 @@ void main()
   gl_Position = PushConstants.proj * PushConstants.view * PushConstants.model * vec4(inPosition, 1.0);
   fragTexCoord = inTexCoord;
   fragNormal = inNormal;
-  fragDirLight = PushConstants.dirLight;
+  // fragDirLight = PushConstants.dirLight;
 
-  mat3 normalMatrix = transpose(inverse(mat3(PushConstants.model)));
-  vec3 normalWorldSpace = normalize(normalMatrix * inNormal);
+  //mat3 normalMatrix = transpose(inverse(mat3(PushConstants.model)));
+  //vec3 normalWorldSpace = normalize(normalMatrix * inNormal);
 
-  float lightIntensity = AMBIENT + max(dot(normalWorldSpace, PushConstants.dirLight), 0);
+  //float lightIntensity = AMBIENT + max(dot(normalWorldSpace, PushConstants.dirLight), 0);
 
-  fragColor = lightIntensity * inColor;
+  fragColor = inColor; //lightIntensity * inColor;
 }

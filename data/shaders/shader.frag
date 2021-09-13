@@ -7,7 +7,8 @@ layout(location = 3) in vec3 fragDirLight;
 
 layout(location = 0) out vec4 outColor;
 
-layout(binding = 1) uniform sampler2D texSampler;
+layout(binding = 0) uniform sampler2D texSampler;
+layout(binding = 1) uniform sampler2D depthSampler;
 
 void main()
 {
