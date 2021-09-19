@@ -1,6 +1,7 @@
 
 const static f64 FIXED_TIME = 1.0 / 60.0;
 
+#include "font.h"
 #include "mesh.h"
 #include "transform.h"
 #include "physics.h"

@@ -106,13 +106,15 @@ stDevice
 };
 
 struct
-stPipeline
+stGfxPipeline
 {
   VkPipeline Pipeline = VK_NULL_HANDLE;
   VkPipelineLayout Layout = VK_NULL_HANDLE;
   VkPipelineLayout MeshLayout = VK_NULL_HANDLE;
   VkDescriptorSetLayout DescriptorSet = VK_NULL_HANDLE;
 };
+
+#include "vulkan_pipeline.h"
 
 struct
 stMaterial
@@ -169,10 +171,11 @@ stRenderObject
 struct
 stMeshPushConstants
 {
-  alignas(16) glm::mat4 Model;
-  alignas(16) glm::mat4 View;
-  alignas(16) glm::mat4 Proj;
-  // alignas(16) glm::vec3 DirectionalLight;
+  //alignas(16) glm::mat4 Model;
+  //alignas(16) glm::mat4 View;
+  //alignas(16) glm::mat4 Proj;
+  alignas(16) glm::mat4 RenderMatrix;
+  alignas(16) glm::vec3 DirectionalLight;
 };
 
 struct
@@ -265,7 +268,7 @@ stRenderer
 
   VkRenderPass ForwardRenderPass = VK_NULL_HANDLE;
 
-  stPipeline GraphicsPipeline = {};
+  stGfxPipeline GraphicsPipeline = {};
 
   struct
   stRenderMeshData
@@ -452,7 +455,7 @@ stRenderer::CreateSwapchain()
     Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, attachments, 3, &SwapchainDeletion);
   }
 
-  GraphicsPipeline = init::create_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
+  GraphicsPipeline = init::create_gfx_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
 
   stMaterial* mat = material::create_material(GraphicsPipeline.Pipeline, GraphicsPipeline.Layout, "default");
 
@@ -641,10 +644,11 @@ stRenderer::DrawObjects(
       }
       
       stMeshPushConstants constants = {};
-      constants.Model = *object.Transform;
-      constants.View = Camera->get_view_matrix();
-      constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
-      // constants.DirectionalLight = Sun->LightDirection;
+      constants.RenderMatrix = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height}) * Camera->get_view_matrix() * (*object.Transform);
+      // constants.Model = *object.Transform;
+      // constants.View = Camera->get_view_matrix();
+      // constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
+      constants.DirectionalLight = Sun->LightDirection;
       
       vkCmdPushConstants(cmd, object.Material->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
     }
