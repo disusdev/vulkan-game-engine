@@ -110,8 +110,10 @@ stGfxPipeline
 {
   VkPipeline Pipeline = VK_NULL_HANDLE;
   VkPipelineLayout Layout = VK_NULL_HANDLE;
-  VkPipelineLayout MeshLayout = VK_NULL_HANDLE;
-  VkDescriptorSetLayout DescriptorSet = VK_NULL_HANDLE;
+  //VkPipelineLayout MeshLayout = VK_NULL_HANDLE;
+
+  VkDescriptorSetLayout SamplerLayout = VK_NULL_HANDLE;
+  VkDescriptorSetLayout ObjectLayout = VK_NULL_HANDLE;
 };
 
 #include "vulkan_pipeline.h"
@@ -169,12 +171,26 @@ stRenderObject
 };
 
 struct
-stMeshPushConstants
+stIndirectBatch
 {
-  //alignas(16) glm::mat4 Model;
-  //alignas(16) glm::mat4 View;
-  //alignas(16) glm::mat4 Proj;
-  alignas(16) glm::mat4 RenderMatrix;
+  stMesh* Mesh;
+  stMaterial* Material;
+  glm::mat4* Transform;
+  //
+  uint32_t First;
+  uint32_t Count;
+};
+
+struct
+stPerObjectDataGPU
+{
+  alignas(16) glm::mat4 Model;
+};
+
+struct
+stGlobalDataGPU
+{
+  alignas(16) glm::mat4 ViewProj;
   alignas(16) glm::vec3 DirectionalLight;
 };
 
@@ -244,6 +260,46 @@ stRenderer
   void
   Render(double delta = 0.0f);
 
+  std::vector<stIndirectBatch>
+  CompactDraws(
+    stRenderObject* objects,
+    uint32_t count)
+  {
+    std::vector<stIndirectBatch> draws;
+
+    auto addToDraws =
+      [&draws](stMesh* mesh,
+               stMaterial* material)
+    {
+      stIndirectBatch firstDraw;
+      firstDraw.Mesh = mesh;
+      firstDraw.Material = material;
+      firstDraw.First = 0;
+      firstDraw.Count = 1;
+
+      draws.push_back(firstDraw);
+    };
+
+    addToDraws(objects[0].Mesh, objects[0].Material);
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+      bool sameMesh = objects->Mesh == draws.back().Mesh;
+      bool sameMaterial = objects->Material == draws.back().Material;
+
+      if (sameMesh && sameMaterial)
+      {
+        draws.back().Count++;
+      }
+      else
+      {
+        addToDraws(objects[i].Mesh, objects[i].Material);
+      }
+    }
+
+    return draws;
+  }
+
   void
   DrawObjects(
     VkCommandBuffer cmd,
@@ -283,9 +339,11 @@ stRenderer
 
   std::unordered_map<stMesh*, stRenderMeshData*> RenderMeshesCache;
 
-  VkDescriptorPool ImageDescriptorPool = VK_NULL_HANDLE;
-  VkDescriptorSet DescriptorSets1[MAX_TEXTURE_COUNT][MAX_SWAPCHAIN_IMAGE_COUNT]; // TODO: define image count
-  VkDescriptorSet DescriptorSets2[MAX_TEXTURE_COUNT][MAX_SWAPCHAIN_IMAGE_COUNT]; // TODO: define image count
+  VkDescriptorPool DescriptorPool = VK_NULL_HANDLE;
+  VkDescriptorSet TextureSets[MAX_TEXTURE_COUNT][MAX_SWAPCHAIN_IMAGE_COUNT]; // TODO: define image count
+
+  stBuffer ObjectBuffers[MAX_SWAPCHAIN_IMAGE_COUNT];
+  VkDescriptorSet ObjectDescriptors[MAX_SWAPCHAIN_IMAGE_COUNT];
 
   stTexture DefaultTexImage = {};
 
@@ -385,6 +443,20 @@ stRenderer::AddRenderingObjectsFromEntities(
     }
   }
 
+  for (size_t i = 0; i < SwapchainImageCount; i++)
+  {
+    void* objectData;
+    vkMapMemory(Device.LogicalDevice, ObjectBuffers[i].Memory, 0, sizeof(stPerObjectDataGPU) * MAX_OBJECTS_COUNT, 0, &objectData);
+      stPerObjectDataGPU* objectSSBO = (stPerObjectDataGPU*)objectData;
+
+      for (int i = 0; i < RenderObjectCount; i++)
+      {
+      	stRenderObject& object = RenderObjects[i];
+      	objectSSBO[i].Model = *object.Transform;
+      }
+    vkUnmapMemory(Device.LogicalDevice, ObjectBuffers[i].Memory);
+  }
+
   {
     for (size_t i = 0; i < mesh::MesheCounter; i++)
     {
@@ -410,7 +482,7 @@ stRenderer::AddRenderingObjectsFromEntities(
         {
           for (size_t j = 0; j < SwapchainImageCount; j++)
           {
-            init::update_descriptor_set(Device, DescriptorSets1[i][j], init::Textures[i]);
+            init::update_descriptor_set(Device, TextureSets[i][j], init::Textures[i]);
           }
         }
       }
@@ -453,6 +525,8 @@ stRenderer::CreateSwapchain()
     };
 
     Framebuffers[i] = init::create_framebuffer(Device, ForwardRenderPass, SwapchainExtent, attachments, 3, &SwapchainDeletion);
+
+    init::create_buffer(Device, MAX_OBJECTS_COUNT * sizeof(stPerObjectDataGPU), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, ObjectBuffers[i], &SwapchainDeletion);
   }
 
   GraphicsPipeline = init::create_gfx_pipeline(Device, SwapchainExtent, ForwardRenderPass, SamplesFlag, &SwapchainDeletion);
@@ -461,14 +535,57 @@ stRenderer::CreateSwapchain()
 
   VkDescriptorPoolSize poolSizes[] =
   { 
-    { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 }
+    { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 },
+    { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1 }
   };
 
-  ImageDescriptorPool = init::create_descriptor_pools(Device, poolSizes, ArrayCount(poolSizes), SwapchainImageCount, &SwapchainDeletion);
+  DescriptorPool = init::create_descriptor_pools(Device, poolSizes, ArrayCount(poolSizes), (MAX_TEXTURE_COUNT + 1) * SwapchainImageCount * ArrayCount(poolSizes), &SwapchainDeletion);
 
-  for (size_t i = 0; i < MAX_TEXTURE_COUNT; i++)
+  for (size_t tc = 0; tc < MAX_TEXTURE_COUNT; tc++)
   {
-    init::create_descriptor_sets(Device, GraphicsPipeline, ImageDescriptorPool, DescriptorSets1[i], SwapchainImageCount, DefaultTexImage);
+    VkDescriptorSetLayout layouts[] = { GraphicsPipeline.SamplerLayout, GraphicsPipeline.SamplerLayout, GraphicsPipeline.SamplerLayout };
+    
+    VkDescriptorSetAllocateInfo allocInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+	  allocInfo.descriptorPool = DescriptorPool;
+	  allocInfo.descriptorSetCount = ArrayCount(layouts);
+	  allocInfo.pSetLayouts = layouts;
+
+	  VK_CHECK(vkAllocateDescriptorSets(Device.LogicalDevice, &allocInfo, &TextureSets[tc][0]));
+
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+	    VkDescriptorImageInfo imageBufferInfo;
+	    imageBufferInfo.sampler = DefaultTexImage.Sampler;
+	    imageBufferInfo.imageView = DefaultTexImage.Image.View;
+	    imageBufferInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+	    VkWriteDescriptorSet texture1 = init::write_descriptor_image(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TextureSets[tc][i], &imageBufferInfo, 0);
+
+	    vkUpdateDescriptorSets(Device.LogicalDevice, 1, &texture1, 0, nullptr);
+    }
+  }
+
+  {
+    VkDescriptorSetLayout layouts[] = { GraphicsPipeline.ObjectLayout, GraphicsPipeline.ObjectLayout, GraphicsPipeline.ObjectLayout};
+
+    VkDescriptorSetAllocateInfo objectSetAlloc = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+		objectSetAlloc.descriptorPool = DescriptorPool;
+		objectSetAlloc.descriptorSetCount = ArrayCount(layouts);
+		objectSetAlloc.pSetLayouts = layouts;
+
+		VK_CHECK(vkAllocateDescriptorSets(Device.LogicalDevice, &objectSetAlloc, &ObjectDescriptors[0]));
+
+    for (size_t i = 0; i < SwapchainImageCount; i++)
+    {
+		  VkDescriptorBufferInfo objectBufferInfo;
+		  objectBufferInfo.buffer = ObjectBuffers[i].Buffer;
+		  objectBufferInfo.offset = 0;
+		  objectBufferInfo.range = sizeof(stPerObjectDataGPU) * MAX_OBJECTS_COUNT;
+
+		  VkWriteDescriptorSet objectWrite = init::write_descriptor_buffer(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, ObjectDescriptors[i], &objectBufferInfo, 0);
+
+		  vkUpdateDescriptorSets(Device.LogicalDevice, 1, &objectWrite, 0, nullptr);
+    }
   }
 
   init::create_command_buffers(Device, CommandPool, CommandBuffers, SwapchainImageCount, VK_COMMAND_BUFFER_LEVEL_PRIMARY, &SwapchainDeletion);
@@ -491,7 +608,7 @@ stRenderer::RecreateSwapchain()
   {
     for (size_t j = 0; j < SwapchainImageCount; j++)
     {
-      init::update_descriptor_set(Device, DescriptorSets1[i][j], init::Textures[i]);
+      init::update_descriptor_set(Device, TextureSets[i][j], init::Textures[i]);
     }
   }
 }
@@ -582,7 +699,7 @@ stRenderer::Render(double delta)
   vkCmdBeginRenderPass(CommandBuffers[imageIndex], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
   {
-    DrawObjects(CommandBuffers[imageIndex], imageIndex, DescriptorSets1, descriptorsCount, RenderObjects.data(), RenderObjectCount);
+    DrawObjects(CommandBuffers[imageIndex], imageIndex, TextureSets, descriptorsCount, RenderObjects.data(), RenderObjectCount);
   }
 
   vkCmdEndRenderPass(CommandBuffers[imageIndex]);
@@ -624,34 +741,92 @@ stRenderer::DrawObjects(
   stRenderObject* first,
   uint32_t count)
 {
+  if (count == 0) return;
+  
+  auto bindDescriptors =
+  [cmd, descriptorSets, targetIndex](
+    stRenderObject& draw,
+    VkDescriptorSet* objectDescriptors,
+    stRenderMeshData* renderData)
+  {
+    //* (*draw.Transform);
+
+    vkCmdBindDescriptorSets(
+      cmd,
+      VK_PIPELINE_BIND_POINT_GRAPHICS,
+      draw.Material->PipelineLayout,
+      0,
+      1,
+      &descriptorSets[renderData->TexImage.DescriptorSetIndex][targetIndex],
+      0,
+      nullptr
+    );
+
+    vkCmdBindDescriptorSets(
+      cmd,
+      VK_PIPELINE_BIND_POINT_GRAPHICS,
+      draw.Material->PipelineLayout,
+      1,
+      1,
+      &objectDescriptors[targetIndex],
+      0,
+      nullptr);
+  };
+
+  auto bindMeshes = [cmd](
+    stRenderMeshData* renderData)
+  {
+    VkBuffer vertexBuffers[] = { renderData->VertexBuffer.Buffer };
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
+    vkCmdBindIndexBuffer(cmd, renderData->IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
+  };
+
+  auto pushConstants = [=](
+    stRenderObject& draw)
+  {
+    stGlobalDataGPU constants = {};
+    constants.ViewProj =
+      Camera->get_projection_matrix({ SwapchainExtent.width, SwapchainExtent.height }) 
+      * Camera->get_view_matrix();
+    constants.DirectionalLight = Sun->LightDirection;
+    
+    vkCmdPushConstants(cmd, draw.Material->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stGlobalDataGPU), &constants);
+  };
+
+  //std::vector<stIndirectBatch> draws = CompactDraws(first, count);
+
+  //for (stIndirectBatch& draw : draws)
+  //{
+  //  stRenderMeshData* renderData = RenderMeshesCache[draw.Mesh];
+
+  //  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.Material->Pipeline);
+
+  //  bindDescriptors(draw, renderData);
+
+  //  bindMeshes(renderData);
+
+  //  pushConstants(draw);
+
+  //  for(int i = draw.First ;i < draw.Count;i++)
+  //  {
+  //    vkCmdDrawIndexed(cmd, (uint32_t) draw.Mesh->Indices.size(), 1, 0, 0, 0);
+  //  }
+  //}
+
+
   for (size_t i = 0; i < count; i++)
   {
     stRenderObject& object = first[i];
     stRenderMeshData* renderData = RenderMeshesCache[object.Mesh];
 
-    // TODO: optimization: same objects material & position draw without new bindings,
-    //       you need to organize rendering objects before rendering
-    {
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->Pipeline);
-
-      VkBuffer vertexBuffers[] = { renderData->VertexBuffer.Buffer };
-      VkDeviceSize offsets[] = { 0 };
-      vkCmdBindVertexBuffers(cmd, 0, 1, vertexBuffers, offsets);
-      vkCmdBindIndexBuffer(cmd, renderData->IndexBuffer.Buffer, 0, VK_INDEX_TYPE_UINT32);
-
-      {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->PipelineLayout, 0, 1, &descriptorSets[renderData->TexImage.DescriptorSetIndex][targetIndex], 0, nullptr);
-      }
-      
-      stMeshPushConstants constants = {};
-      constants.RenderMatrix = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height}) * Camera->get_view_matrix() * (*object.Transform);
-      // constants.Model = *object.Transform;
-      // constants.View = Camera->get_view_matrix();
-      // constants.Proj = Camera->get_projection_matrix({SwapchainExtent.width, SwapchainExtent.height});
-      constants.DirectionalLight = Sun->LightDirection;
-      
-      vkCmdPushConstants(cmd, object.Material->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(stMeshPushConstants), &constants);
-    }
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.Material->Pipeline);
+    
+    bindDescriptors(object, ObjectDescriptors, renderData);
+    
+    bindMeshes(renderData);
+    
+    pushConstants(object);    
 
     vkCmdDrawIndexed(cmd, (uint32_t) object.Mesh->Indices.size(), 1, 0, 0, 0);
   }

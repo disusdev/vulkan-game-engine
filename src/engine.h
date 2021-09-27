@@ -6,6 +6,7 @@ const static f64 FIXED_TIME = 1.0 / 60.0;
 #include "transform.h"
 #include "physics.h"
 #include "entity.h"
+#include "player.h"
 #include "scene.h"
 #include "vulkan_renderer.h"
 
@@ -14,10 +15,16 @@ engine
 {
   // renderer
   stWindow Window = {};
+
   stInputState Input;
+
   stRenderer Renderer;
-  stCamera Camera;
+
+  stCamera SceneCamera;
   stSun Sun;
+
+  stPlayer Player;
+
   f64 AwakeTime = 0.0;
   bool IsRunning = false;
 
@@ -86,7 +93,7 @@ engine
     //*base_entities[0].Entity->Transform.Tramsform = glm::scale(*base_entities[0].Entity->Transform.Tramsform, glm::vec3(100.0f, 100.0f, 100.0f));
     
 
-    Renderer.Camera = &Camera;
+    Renderer.Camera = &SceneCamera;
     Renderer.Sun = &Sun;
     Renderer.Init(Window);
 
@@ -120,7 +127,8 @@ engine
       accumulator += delta;
 
       // update()
-      Camera.update_camera(Input, delta);
+      Player.Update(Input, delta);
+      SceneCamera.update_camera(Input, delta);
       Sun.Update((float)delta, Input);
 
       while (accumulator >= FIXED_TIME)

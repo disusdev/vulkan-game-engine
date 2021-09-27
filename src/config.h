@@ -25,6 +25,9 @@
 
 #define SHADOWMAP_DIM 1024
 
+// TODO: need to be bynamic
+#define MAX_OBJECTS_COUNT 1024
+
 
 // #define MAX_ENTITIES_COUNT 1024
 // #define MAX_RENDER_OBJECT_COUNT 1024

@@ -32,7 +32,8 @@ stScene
     // uint8_t Active = false;
     // name buffer
     uint32_t NameLength;
-    uint32_t Active;
+    uint16_t Active;
+    uint16_t Dynamic;
   };
 
   // TODO: save current active scene

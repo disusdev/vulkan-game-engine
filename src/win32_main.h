@@ -220,8 +220,8 @@ sys::UpdateInput()
   if (g_Engine.Input.GetKeyDown(KEY_TAB))
   {
       SetCursorPos( (int)g_Engine.Input.CenterPosition.x, (int)g_Engine.Input.CenterPosition.y );
-      ShowCursor(g_Engine.Camera.Locked);
-      g_Engine.Camera.Locked = !g_Engine.Camera.Locked;
+      ShowCursor(g_Engine.Renderer.Camera->Locked);
+      g_Engine.Renderer.Camera->Locked = !g_Engine.Renderer.Camera->Locked;
   }
 
   if (g_Engine.Input.WorkInBackground || g_Engine.Window.Focused)
@@ -260,7 +260,7 @@ sys::UpdateInput()
         ? g_Engine.Input.KeysHold | enKeyAction::KEY_LOAD
         : g_Engine.Input.KeysHold;
 
-      if (g_Engine.Camera.Locked)
+      if (g_Engine.Renderer.Camera->Locked)
       {
         POINT p;
         GetCursorPos(&p);

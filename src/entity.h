@@ -23,6 +23,8 @@ stEntity
   stTransform Transform;
   stEntity* Childrens[MAX_ENTITY_CILDRENS];
   stEntity* Parent = nullptr;
+
+  bool Dynamic = false;
 };
 
 struct

@@ -1,8 +1,13 @@
-#version 450
+#version 460
+
+struct ObjectData
+{
+	mat4 model;
+};
 
 layout( push_constant ) uniform constants
 {
-  mat4 renderMatrix;
+  mat4 viewProj;
   vec3 dirLight;
 } PushConstants;
 
@@ -15,11 +20,18 @@ layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec2 fragTexCoord;
 layout(location = 2) out vec3 fragNormal;
 
+layout(std140, set = 1, binding = 0) readonly buffer ObjectBuffer
+{
+	ObjectData objects[];
+} objectBuffer;
+
 const float AMBIENT = 0.02;
 
 void main()
 {
-  gl_Position = PushConstants.renderMatrix * vec4(inPosition, 1.0);
+  mat4 modelMatrix = objectBuffer.objects[gl_BaseInstance].model;
+
+  gl_Position = PushConstants.viewProj * modelMatrix * vec4(inPosition, 1.0);
   fragTexCoord = inTexCoord;
   fragNormal = inNormal;
   // fragDirLight = PushConstants.dirLight;
