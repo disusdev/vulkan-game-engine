@@ -16,3 +16,9 @@
 [submodule "ext/VulkanMemoryAllocator"]
 	path = ext/VulkanMemoryAllocator
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "ext/box2d"]
+	path = ext/box2d
+	url = https://github.com/erincatto/box2d.git
+[submodule "ext/msdfgen"]
+	path = ext/msdfgen
+	url = https://github.com/Chlumsky/msdfgen.git
